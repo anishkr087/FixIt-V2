@@ -1,0 +1,46 @@
+# Dependencies
+**/node_modules/
+
+# Expo
+**/.expo/
+**/dist/
+**/web-build/
+**/expo-env.d.ts
+
+# Native builds & keys
+**/.kotlin/
+**/*.orig.*
+**/*.jks
+**/*.p8
+**/*.p12
+**/*.key
+**/*.mobileprovision
+
+# Metro
+**/.metro-health-check*
+
+# Debug logs
+**/npm-debug.*
+**/yarn-debug.*
+**/yarn-error.*
+**/*.log
+
+# Environment variables (highly critical to ignore for local configuration and security)
+**/.env
+**/.env.local
+**/.env*.local
+**/.env.production
+**/.env.development
+
+# System / IDE
+.DS_Store
+Thumbs.db
+**/.vscode/
+**/.idea/
+**/*.tsbuildinfo
+
+# Generated native directories for Expo projects
+/fixit/ios/
+/fixit/android/
+/fixit_patner/ios/
+/fixit_patner/android/
