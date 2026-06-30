@@ -111,37 +111,12 @@ export const HomeScreen = () => {
         </View>
 
 
-        {/* New AI / Quick Actions */}
-        <Text style={styles.sectionTitle}>Smart Fixes</Text>
-        
-        <TouchableOpacity 
-          style={styles.aiActionCard} 
-          onPress={() => navigation.navigate('AiRepair')}
-        >
-          <LinearGradient 
-            colors={['#1a1025', '#382250']} 
-            style={styles.aiActionGradient}
-            start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
-          >
-            <View style={styles.aiContentInfo}>
-              <Text style={styles.aiTitle}>Self Repair (AI Help)</Text>
-              <Text style={styles.aiSubText}>Diagnose and fix issues instantly with Gemini AI.</Text>
-            </View>
-            <Ionicons name="hardware-chip" size={48} color="#E0C3FC" />
-          </LinearGradient>
-        </TouchableOpacity>
-
+        {/* Quick Actions */}
         <View style={styles.quickActionsContainer}>
-          <TouchableOpacity style={styles.quickActionCard}>
-            <LinearGradient colors={['#FFF59D', '#FDE047']} style={styles.quickActionGradient}>
-              <Ionicons name="build" size={28} color={colors.textPrimary} />
-              <Text style={[styles.quickActionText, { color: colors.textPrimary }]}>Drop & Repair</Text>
-            </LinearGradient>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.quickActionCard}>
+          <TouchableOpacity style={[styles.quickActionCard, { width: '100%' }]}>
             <LinearGradient colors={['#FF9E9E', '#FF6B6B']} style={styles.quickActionGradient}>
               <Ionicons name="alert-circle" size={28} color="#FFF" />
-              <Text style={styles.quickActionText}>Emergency</Text>
+              <Text style={styles.quickActionText}>Emergency Services</Text>
             </LinearGradient>
           </TouchableOpacity>
         </View>

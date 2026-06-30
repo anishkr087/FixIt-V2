@@ -21,8 +21,7 @@ export const CheckoutScreen = ({ navigation }: any) => {
   const { setBooking, setPartnerLocation } = useBookingStore();
 
   const total = getTotal();
-  const taxes = Math.round(total * 0.18);
-  const finalTotal = total + taxes + 49; // 49 is platform fee
+  const finalTotal = total;
 
   useEffect(() => {
     // Connect user socket to backend
@@ -70,10 +69,15 @@ export const CheckoutScreen = ({ navigation }: any) => {
       return;
     }
 
+    if (!user || !user.phone) {
+      Alert.alert("Authentication Required", "Please log in to confirm booking.");
+      return;
+    }
+
     const category = items[0]?.category || 'Electrician';
     const problemDescription = items.map(item => `${item.name} (${item.quantity}x)`).join(', ');
-    const customerId = user?.phone || 'cust_' + Math.random().toString(36).substr(2, 9);
-    const customerName = user?.name || 'Aisha Y.';
+    const customerId = user.phone;
+    const customerName = user.name || 'Valued Customer';
 
     const lat = currentLocation?.coords.latitude || 28.6139;
     const lng = currentLocation?.coords.longitude || 77.2090;
@@ -92,6 +96,7 @@ export const CheckoutScreen = ({ navigation }: any) => {
       customerName,
       problemDescription,
       category,
+      paymentMethod,
       estimatedPrice: finalTotal,
       lat,
       lng
@@ -182,15 +187,7 @@ export const CheckoutScreen = ({ navigation }: any) => {
             <Text style={styles.billLabel}>Item Total</Text>
             <Text style={styles.billValue}>₹{total}</Text>
           </View>
-          <View style={styles.billRow}>
-            <Text style={styles.billLabel}>Taxes & Fee (18%)</Text>
-            <Text style={styles.billValue}>₹{taxes}</Text>
-          </View>
-          <View style={styles.billRow}>
-            <Text style={styles.billLabel}>Platform Fee</Text>
-            <Text style={styles.billValue}>₹49</Text>
-          </View>
-          <View style={[styles.billRow, styles.totalRow]}>
+          <View style={[styles.billRow, styles.totalRow, { borderTopWidth: 0, marginTop: 0, paddingTop: 0 }]}>
             <Text style={styles.totalLabel}>Total to Pay</Text>
             <Text style={styles.totalValue}>₹{finalTotal}</Text>
           </View>

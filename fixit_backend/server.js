@@ -3,20 +3,29 @@ const http = require('http');
 const { Server } = require('socket.io');
 const mongoose = require('mongoose');
 const cors = require('cors');
+const jwt = require('jsonwebtoken');
 const dbHelper = require('./db_helper');
 require('dotenv').config();
 
 const app = express();
 const server = http.createServer(app);
+
+// Safe CORS origin configuration for live production
+const allowedOrigins = process.env.ALLOWED_ORIGIN 
+  ? process.env.ALLOWED_ORIGIN.split(',') 
+  : '*'; // In production, this should be explicitly set in the environment configuration
+
 const io = new Server(server, {
   cors: {
-    origin: '*',
+    origin: allowedOrigins,
     methods: ['GET', 'POST']
   }
 });
 
-// Middleware
-app.use(cors());
+// Express CORS Configuration
+app.use(cors({
+  origin: allowedOrigins
+}));
 app.use(express.json());
 
 // MongoDB Connection
@@ -31,7 +40,7 @@ const partnerRoutes = require('./routes/partner');
 app.use('/api/auth', authRoutes);
 app.use('/api/partner', partnerRoutes);
 
-app.get('/', (req, res) => res.send('FixIt Backend Running.'));
+app.get('/', (req, res) => res.send('FixIt Secure Backend Running.'));
 
 // Registry of active online partners
 const activePartners = {};
@@ -53,12 +62,57 @@ function getDistanceKm(lat1, lon1, lat2, lon2) {
   return R * c;
 }
 
-// Socket.IO
-io.on('connection', (socket) => {
-  console.log('A user connected:', socket.id);
+// Socket.IO Handshake Authentication Middleware
+io.use((socket, next) => {
+  const token = socket.handshake.auth?.token;
+  if (!token) {
+    console.error(`[Socket Auth Error] Socket connection rejected from IP ${socket.handshake.address || 'unknown'}: No token provided.`);
+    return next(new Error('Authentication error: Token required'));
+  }
 
-  socket.on('go_online', (data) => {
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret_longer_key_needed_32');
+    
+    // Enforce payload structure
+    if (!decoded.id || !decoded.type) {
+      return next(new Error('Authentication error: Invalid token payload'));
+    }
+
+    socket.userId = decoded.id;
+    socket.userType = decoded.type; // 'partner' or 'customer'
+    console.log(`[Socket Auth] Authorized ${socket.userType} session for: ${socket.userId}`);
+    next();
+  } catch (err) {
+    console.error(`[Socket Auth Error] Token verification failed for socket ${socket.id}: ${err.message}`);
+    return next(new Error('Authentication error: Invalid session'));
+  }
+});
+
+// Socket.IO Events
+io.on('connection', (socket) => {
+  console.log(`A user connected securely: ${socket.id} (user: ${socket.userId})`);
+
+  socket.on('go_online', async (data) => {
     const { partnerId, lat, lng, membershipTier = 'basic', serviceCategory } = data;
+    
+    // Authorization Check: Socket owner must match action target
+    if (socket.userType !== 'partner' || socket.userId !== partnerId) {
+      console.error(`[Security Violation] Socket ${socket.id} attempted 'go_online' for partnerId ${partnerId} but is authenticated as user ${socket.userId} (${socket.userType}).`);
+      return;
+    }
+
+    // Check suspension status before going online
+    try {
+      const partner = await dbHelper.findPartnerById(partnerId);
+      if (partner && partner.walletBalance <= -500) {
+        console.warn(`[Suspension Block] Suspended partner ${partnerId} (balance: ₹${partner.walletBalance}) blocked from going online.`);
+        socket.emit('error_notification', 'Your account is suspended due to negative wallet balance (threshold: -₹500). Please pay dues to go online.');
+        return;
+      }
+    } catch (err) {
+      console.error('Error verifying suspension on go_online:', err);
+    }
+
     console.log(`Partner ${partnerId} (${membershipTier}) [${serviceCategory || 'No Category'}] online at: ${lat}, ${lng}`);
     
     activePartners[partnerId] = {
@@ -70,96 +124,41 @@ io.on('connection', (socket) => {
     };
     
     socket.join('online_partners');
-
-    // MOCK: Emit filtered job requests after 5 seconds to test the range logic!
-    if (process.env.ENABLE_MOCK_JOBS === 'true') {
-      setTimeout(() => {
-        // Check if partner is still online and has same socket connection
-        if (!activePartners[partnerId] || activePartners[partnerId].socketId !== socket.id) return;
-  
-        const partner = activePartners[partnerId];
-        const pLat = partner.lat;
-        const pLng = partner.lng;
-  
-        // Define three mock jobs at increasing offsets from partner's actual position
-        const simulatedJobs = [
-          {
-            jobId: 'job_basic_1.8km',
-            problemDescription: 'AC is leaking water',
-            customerName: 'Aisha Y.',
-            estimatedPrice: 600,
-            lat: pLat + 0.012,
-            lng: pLng + 0.012
-          },
-          {
-            jobId: 'job_silver_4.0km',
-            problemDescription: 'Ceiling fan replacement',
-            customerName: 'Rohan M.',
-            estimatedPrice: 400,
-            lat: pLat + 0.027,
-            lng: pLng + 0.027
-          },
-          {
-            jobId: 'job_gold_6.2km',
-            problemDescription: 'Full house painting inspection',
-            customerName: 'Vikram S.',
-            estimatedPrice: 1200,
-            lat: pLat + 0.042,
-            lng: pLng + 0.042
-          }
-        ];
-  
-        // Service range based on membership tier
-        let maxRangeKm = 3.0;
-        /* FUTURE UPDATE:
-        if (partner.membershipTier === 'silver') maxRangeKm = 5.0;
-        if (partner.membershipTier === 'gold') maxRangeKm = 7.5;
-        */
-  
-        console.log(`Matching jobs for partner ${partnerId} (${partner.membershipTier}). Max range threshold: ${maxRangeKm} km`);
-  
-        simulatedJobs.forEach((job) => {
-          const dist = getDistanceKm(pLat, pLng, job.lat, job.lng);
-          console.log(`Job ${job.jobId} is at distance ${dist.toFixed(2)} km from partner`);
-  
-          if (dist <= maxRangeKm) {
-            console.log(`>> Dispatching Job ${job.jobId} (within ${maxRangeKm} km range)`);
-            io.to(socket.id).emit('new_job_broadcast', {
-              jobId: job.jobId,
-              problemDescription: job.problemDescription,
-              customerName: job.customerName,
-              estimatedPrice: job.estimatedPrice,
-              distance: parseFloat(dist.toFixed(1)),
-              lat: job.lat,
-              lng: job.lng
-            });
-          } else {
-            console.log(`>> Filtering out Job ${job.jobId} (outside ${maxRangeKm} km range)`);
-          }
-        });
-      }, 5000);
-    }
   });
 
   socket.on('go_offline', (data) => {
     const { partnerId } = data;
+    
+    // Authorization Check
+    if (socket.userType !== 'partner' || socket.userId !== partnerId) {
+      console.error(`[Security Violation] Socket ${socket.id} attempted 'go_offline' for partnerId ${partnerId} but is authenticated as ${socket.userId}.`);
+      return;
+    }
+
     console.log(`Partner ${partnerId} offline`);
     delete activePartners[partnerId];
   });
 
   // Client requests a service professional
   socket.on('request_job', async (data) => {
-    const { customerId, customerName, problemDescription, category, estimatedPrice, lat, lng } = data;
-    console.log(`[Job Request] Customer ${customerName} requested ${category} for ₹${estimatedPrice} - "${problemDescription}"`);
+    const { customerId, customerName, problemDescription, category, paymentMethod = 'COD', estimatedPrice, lat, lng } = data;
+    
+    // Authorization Check
+    if (socket.userType !== 'customer' || socket.userId !== customerId) {
+      console.error(`[Security Violation] Socket ${socket.id} attempted 'request_job' for customerId ${customerId} but is authenticated as ${socket.userId}.`);
+      return;
+    }
 
-    const tempJobId = 'job_' + Math.random().toString(36).substr(2, 9);
+    console.log(`[Job Request] Customer ${customerName} (${customerId}) requested ${category} for ₹${estimatedPrice} [Payment: ${paymentMethod}] - "${problemDescription}"`);
+
     const newJob = {
-      jobId: tempJobId,
+      jobId: 'job_' + Math.random().toString(36).substr(2, 9),
       customerId,
       customerName,
       problemDescription,
       category,
       estimatedPrice,
+      paymentMethod,
       status: 'pending',
       assignedPartner: null,
       lat,
@@ -167,33 +166,37 @@ io.on('connection', (socket) => {
       createdAt: new Date()
     };
 
-    activeJobs[tempJobId] = newJob;
+    activeJobs[newJob.jobId] = newJob;
     customerSockets[customerId] = socket.id;
 
-    // Save to Mongoose if MongoDB is active
-    if (mongoose.connection.readyState === 1) {
-      try {
-        const JobRequest = require('./models/JobRequest');
-        const dbJob = new JobRequest({
-          customerId,
-          problemDescription,
-          estimatedPrice,
-          status: 'pending',
-          customerLocation: {
-            type: 'Point',
-            coordinates: [lng, lat]
-          }
-        });
-        const savedJob = await dbJob.save();
-        
-        // Re-key in-memory registry with real MongoDB ID
-        newJob.jobId = savedJob._id.toString();
-        activeJobs[savedJob._id.toString()] = newJob;
-        delete activeJobs[tempJobId];
-        console.log(`JobRequest persisted in MongoDB with ID: ${savedJob._id}`);
-      } catch (err) {
-        console.error('Failed to persist JobRequest to MongoDB:', err);
-      }
+    // Save to Mongoose strictly
+    try {
+      const JobRequest = require('./models/JobRequest');
+      const dbJob = new JobRequest({
+        customerId,
+        problemDescription,
+        estimatedPrice,
+        paymentMethod,
+        status: 'pending',
+        customerLocation: {
+          type: 'Point',
+          coordinates: [lng, lat]
+        }
+      });
+      const savedJob = await dbJob.save();
+      
+      // Re-key in-memory registry with real MongoDB ID
+      newJob.jobId = savedJob._id.toString();
+      activeJobs[savedJob._id.toString()] = newJob;
+      delete activeJobs[newJob.jobId];
+      console.log(`JobRequest persisted in MongoDB with ID: ${savedJob._id}`);
+    } catch (err) {
+      console.error('Failed to persist JobRequest to MongoDB:', err);
+      socket.emit('booking_status_update', {
+        status: 'error',
+        message: 'Could not create booking request due to database failure.'
+      });
+      return;
     }
 
     const activeJobId = newJob.jobId;
@@ -202,55 +205,24 @@ io.on('connection', (socket) => {
     let closestPartner = null;
     let minDistance = Infinity;
 
-    if (dbHelper.isDbConnected()) {
-      try {
-        console.log('[Matching] Performing MongoDB 2dsphere geo-spatial query...');
-        // Query partners within standard 3km limit (3000m)
-        const dbPartners = await dbHelper.findNearestOnlinePartners(lat, lng, category, 3000);
-        if (dbPartners && dbPartners.length > 0) {
-          const nearestDbPartner = dbPartners[0];
-          // Find their active socket connection information
-          const partnerSocketInfo = activePartners[nearestDbPartner._id.toString()];
-          if (partnerSocketInfo) {
-            closestPartner = {
-              partnerId: nearestDbPartner._id.toString(),
-              socketId: partnerSocketInfo.socketId,
-              distance: getDistanceKm(lat, lng, nearestDbPartner.location.coordinates[1], nearestDbPartner.location.coordinates[0])
-            };
-          }
-        }
-      } catch (err) {
-        console.error('Geo matching MongoDB error:', err);
-      }
-    }
-
-    // Fallback if database is disconnected or no active socket match was found in MongoDB
-    if (!closestPartner) {
-      console.log('[Matching] Falling back to active memory matching registry...');
-      for (const pid in activePartners) {
-        const partner = activePartners[pid];
-        
-        if (partner.serviceCategory === category || !partner.serviceCategory) {
-          const dist = getDistanceKm(lat, lng, partner.lat, partner.lng);
-          
-          let maxRangeKm = 3.0;
-          /* FUTURE UPDATE:
-          if (partner.membershipTier === 'silver') maxRangeKm = 5.0;
-          if (partner.membershipTier === 'gold') maxRangeKm = 7.5;
-          */
-
-          console.log(`Checking matching partner ${pid} (${partner.membershipTier || 'basic'}): distance ${dist.toFixed(2)} km`);
-
-          if (dist <= maxRangeKm && dist < minDistance) {
-            minDistance = dist;
-            closestPartner = {
-              partnerId: pid,
-              socketId: partner.socketId,
-              distance: dist
-            };
-          }
+    try {
+      console.log('[Matching] Performing MongoDB 2dsphere geo-spatial query...');
+      // Query partners within standard 3km limit (3000m)
+      const dbPartners = await dbHelper.findNearestOnlinePartners(lat, lng, category, 3000);
+      if (dbPartners && dbPartners.length > 0) {
+        const nearestDbPartner = dbPartners[0];
+        // Find their active socket connection information
+        const partnerSocketInfo = activePartners[nearestDbPartner._id.toString()];
+        if (partnerSocketInfo) {
+          closestPartner = {
+            partnerId: nearestDbPartner._id.toString(),
+            socketId: partnerSocketInfo.socketId,
+            distance: getDistanceKm(lat, lng, nearestDbPartner.location.coordinates[1], nearestDbPartner.location.coordinates[0])
+          };
         }
       }
+    } catch (err) {
+      console.error('Geo matching MongoDB error:', err);
     }
 
     if (closestPartner) {
@@ -285,6 +257,13 @@ io.on('connection', (socket) => {
 
   socket.on('accept_job', async (data) => {
     const { jobId, partnerId } = data;
+    
+    // Authorization Check
+    if (socket.userType !== 'partner' || socket.userId !== partnerId) {
+      console.error(`[Security Violation] Socket ${socket.id} attempted 'accept_job' for partnerId ${partnerId} but is authenticated as ${socket.userId}.`);
+      return;
+    }
+
     console.log(`Partner ${partnerId} accepted Job ${jobId}`);
 
     if (activeJobs[jobId]) {
@@ -292,51 +271,38 @@ io.on('connection', (socket) => {
       job.status = 'accepted';
       job.assignedPartner = partnerId;
 
-      if (mongoose.connection.readyState === 1) {
-        try {
-          const JobRequest = require('./models/JobRequest');
-          await JobRequest.findByIdAndUpdate(jobId, { 
-            status: 'accepted',
-            assignedPartner: partnerId
-          });
-        } catch (err) {
-          console.error('MongoDB accept_job error:', err);
-        }
+      try {
+        const JobRequest = require('./models/JobRequest');
+        await JobRequest.findByIdAndUpdate(jobId, { 
+          status: 'accepted',
+          assignedPartner: partnerId
+        });
+      } catch (err) {
+        console.error('MongoDB accept_job error:', err);
+        return;
       }
 
-      // Send partner details back to user app
+      // Retrieve details from DB securely
       let partnerDetails = {
-        name: 'John Doe',
-        phone: '9876543210',
-        rating: 4.8,
-        experience: 5
+        name: 'Professional Partner',
+        phone: 'Hidden',
+        rating: 5.0,
+        experience: 1
       };
 
-      if (activePartners[partnerId]) {
-        // Retrieve details from memory fallback if needed
-        const p = activePartners[partnerId];
-        partnerDetails = {
-          name: p.name || 'John Doe',
-          phone: p.phone || '9876543210',
-          rating: p.rating || 4.8,
-          experience: p.experience || 5
-        };
-      } else {
-        // Query DB for partner details
-        try {
-          const Partner = require('./models/Partner');
-          const pDb = await Partner.findById(partnerId);
-          if (pDb) {
-            partnerDetails = {
-              name: pDb.name,
-              phone: pDb.phone,
-              rating: pDb.rating,
-              experience: pDb.experience
-            };
-          }
-        } catch (err) {
-          console.error(err);
+      try {
+        const Partner = require('./models/Partner');
+        const pDb = await Partner.findById(partnerId);
+        if (pDb) {
+          partnerDetails = {
+            name: pDb.name,
+            phone: pDb.phone,
+            rating: pDb.rating || 5.0,
+            experience: pDb.experience || 1
+          };
         }
+      } catch (err) {
+        console.error('Failed to read partner info for broadcast:', err);
       }
 
       const customerSocketId = customerSockets[job.customerId];
@@ -353,6 +319,13 @@ io.on('connection', (socket) => {
 
   socket.on('update_location', (data) => {
     const { partnerId, lat, lng } = data;
+    
+    // Authorization Check
+    if (socket.userType !== 'partner' || socket.userId !== partnerId) {
+      console.error(`[Security Violation] Socket ${socket.id} attempted 'update_location' for partnerId ${partnerId} but is authenticated as ${socket.userId}.`);
+      return;
+    }
+
     if (activePartners[partnerId]) {
       activePartners[partnerId].lat = lat;
       activePartners[partnerId].lng = lng;
@@ -376,21 +349,33 @@ io.on('connection', (socket) => {
 
   socket.on('update_job_status', async (data) => {
     const { jobId, status, partnerId } = data;
+    
+    // Authorization Check
+    if (socket.userType !== 'partner' || socket.userId !== partnerId) {
+      console.error(`[Security Violation] Socket ${socket.id} attempted 'update_job_status' for partnerId ${partnerId} but is authenticated as ${socket.userId}.`);
+      return;
+    }
+
     console.log(`[Job ${jobId}] Status advanced to: ${status}`);
 
     if (activeJobs[jobId]) {
-      activeJobs[jobId].status = status;
-
-      if (mongoose.connection.readyState === 1) {
-        try {
-          const JobRequest = require('./models/JobRequest');
-          await JobRequest.findByIdAndUpdate(jobId, { status });
-        } catch (err) {
-          console.error('MongoDB update_job_status error:', err);
-        }
+      const job = activeJobs[jobId];
+      
+      // Ownership check: partner must be the one assigned
+      if (job.assignedPartner !== partnerId) {
+        console.error(`[Security Violation] Partner ${partnerId} attempted status update on unassigned job ${jobId}. Assigned: ${job.assignedPartner}`);
+        return;
       }
 
-      const job = activeJobs[jobId];
+      job.status = status;
+
+      try {
+        const JobRequest = require('./models/JobRequest');
+        await JobRequest.findByIdAndUpdate(jobId, { status });
+      } catch (err) {
+        console.error('MongoDB update_job_status error:', err);
+      }
+
       const customerSocketId = customerSockets[job.customerId];
       if (customerSocketId) {
         io.to(customerSocketId).emit('booking_status_update', {
@@ -404,22 +389,35 @@ io.on('connection', (socket) => {
 
   socket.on('complete_job', async (data) => {
     const { jobId, partnerId } = data;
+    
+    // Authorization Check
+    if (socket.userType !== 'partner' || socket.userId !== partnerId) {
+      console.error(`[Security Violation] Socket ${socket.id} attempted 'complete_job' for partnerId ${partnerId} but is authenticated as ${socket.userId}.`);
+      return;
+    }
+
     console.log(`Job ${jobId} completed by partner ${partnerId}`);
 
     if (activeJobs[jobId]) {
       const job = activeJobs[jobId];
+      
+      // Ownership check: partner must be the one assigned
+      if (job.assignedPartner !== partnerId) {
+        console.error(`[Security Violation] Partner ${partnerId} attempted 'complete_job' on unassigned job ${jobId}.`);
+        return;
+      }
+
       job.status = 'completed';
 
-      if (mongoose.connection.readyState === 1) {
-        try {
-          const JobRequest = require('./models/JobRequest');
-          await JobRequest.findByIdAndUpdate(jobId, { 
-            status: 'completed',
-            completedAt: new Date()
-          });
-        } catch (err) {
-          console.error('MongoDB complete_job status update error:', err);
-        }
+      try {
+        const JobRequest = require('./models/JobRequest');
+        await JobRequest.findByIdAndUpdate(jobId, { 
+          status: 'completed',
+          completedAt: new Date()
+        });
+      } catch (err) {
+        console.error('MongoDB complete_job status update error:', err);
+        return;
       }
 
       try {
@@ -427,33 +425,49 @@ io.on('connection', (socket) => {
         const commission = Math.round(gross * 0.2);
         const net = gross - commission;
 
-        // Save gross earning transaction
-        await dbHelper.createTransaction({
-          partnerId,
-          jobId,
-          type: 'earning',
-          amount: gross,
-          description: `${job.category || 'Service'} Job completed`
-        });
-
-        // Save platform commission transaction
-        await dbHelper.createTransaction({
-          partnerId,
-          jobId,
-          type: 'commission_deduction',
-          amount: -commission,
-          description: 'Platform Commission (20%)'
-        });
-
-        // Update partner's walletBalance & jobsCompleted
         const partner = await dbHelper.findPartnerById(partnerId);
         if (partner) {
-          const newBalance = (partner.walletBalance || 0) + net;
+          let newBalance = partner.walletBalance || 0;
+
+          if (job.paymentMethod === 'COD') {
+            // Cash payment: Partner received Gross in cash. Deduct 20% platform commission from wallet.
+            await dbHelper.createTransaction({
+              partnerId,
+              jobId,
+              type: 'commission_deduction',
+              amount: -commission,
+              description: `Platform Commission (20%) for Cash Job`
+            });
+
+            newBalance -= commission;
+            console.log(`[Payment] COD Job: Deducted commission ₹${commission} from partner ${partnerId}. New balance: ₹${newBalance}`);
+          } else {
+            // UPI payment: Platform collected the gross. Credit 80% net earnings to partner wallet.
+            await dbHelper.createTransaction({
+              partnerId,
+              jobId,
+              type: 'earning',
+              amount: gross,
+              description: `${job.category || 'Service'} Job completed`
+            });
+
+            await dbHelper.createTransaction({
+              partnerId,
+              jobId,
+              type: 'commission_deduction',
+              amount: -commission,
+              description: 'Platform Commission (20%)'
+            });
+
+            newBalance += net;
+            console.log(`[Payment] Online Job: Credited net earning ₹${net} to partner ${partnerId}. New balance: ₹${newBalance}`);
+          }
+
+          // Save new balance
           await dbHelper.updatePartnerById(partnerId, {
             walletBalance: newBalance,
             jobsCompleted: (partner.jobsCompleted || 0) + 1
           });
-          console.log(`Updated Partner ${partnerId} wallet balance to ₹${newBalance}`);
         }
       } catch (err) {
         console.error('Error saving transactions and updating partner wallet:', err);

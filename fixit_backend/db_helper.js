@@ -1,160 +1,139 @@
 const mongoose = require('mongoose');
+const crypto = require('crypto');
 const Partner = require('./models/Partner');
 const Transaction = require('./models/Transaction');
 
-// In-memory fallback database
-const mockPartners = {};
-const mockTransactions = [];
+// Key derivation from JWT_SECRET to ensure 32-byte key for AES-256-CBC
+const ENCRYPTION_KEY = crypto.scryptSync(process.env.JWT_SECRET || 'fallback_secret_longer_key_needed_32', 'salt', 32);
+const IV_LENGTH = 16;
+
+function encryptText(text) {
+  if (!text) return text;
+  const iv = crypto.randomBytes(IV_LENGTH);
+  const cipher = crypto.createCipheriv('aes-256-cbc', ENCRYPTION_KEY, iv);
+  let encrypted = cipher.update(text, 'utf8');
+  encrypted = Buffer.concat([encrypted, cipher.final()]);
+  return iv.toString('hex') + ':' + encrypted.toString('hex');
+}
+
+function decryptText(text) {
+  if (!text || !text.includes(':')) return text;
+  const textParts = text.split(':');
+  const iv = Buffer.from(textParts.shift(), 'hex');
+  const encryptedText = Buffer.from(textParts.join(':'), 'hex');
+  const decipher = crypto.createDecipheriv('aes-256-cbc', ENCRYPTION_KEY, iv);
+  let decrypted = decipher.update(encryptedText);
+  decrypted = Buffer.concat([decrypted, decipher.final()]);
+  return decrypted.toString('utf8');
+}
 
 const isDbConnected = () => {
   return mongoose.connection.readyState === 1;
 };
 
-const findPartnerByPhone = async (phone) => {
-  if (isDbConnected()) {
-    try {
-      return await Partner.findOne({ phone });
-    } catch (err) {
-      console.error('MongoDB Error in findPartnerByPhone:', err);
-    }
+const enforceDbConnection = () => {
+  if (!isDbConnected()) {
+    throw new Error('Database connection is not active. Operation rejected for security and consistency.');
   }
-  
-  // Fallback to in-memory
-  console.log(`[DB Fallback] Finding partner by phone: ${phone}`);
-  return Object.values(mockPartners).find(p => p.phone === phone) || null;
+};
+
+const findPartnerByPhone = async (phone) => {
+  enforceDbConnection();
+  return await Partner.findOne({ phone });
 };
 
 const createPartner = async (partnerData) => {
-  if (isDbConnected()) {
-    try {
-      const partner = new Partner(partnerData);
-      return await partner.save();
-    } catch (err) {
-      console.error('MongoDB Error in createPartner:', err);
-    }
+  enforceDbConnection();
+  
+  // Encrypt sensitive document IDs if provided
+  const updatedData = { ...partnerData };
+  if (updatedData.documents && updatedData.documents.idProof) {
+    updatedData.documents.idProof = encryptText(updatedData.documents.idProof);
   }
-
-  // Fallback to in-memory
-  console.log('[DB Fallback] Creating partner in memory:', partnerData);
-  const id = 'mock_partner_' + Math.random().toString(36).substr(2, 9);
-  const newPartner = {
-    _id: id,
-    rating: 5.0,
-    jobsCompleted: 0,
-    walletBalance: 0,
-    isOnline: false,
-    membershipTier: 'basic',
-    kycVerified: false,
-    location: { type: 'Point', coordinates: [0, 0] },
-    documents: { idProof: '', skillCertificate: '' },
-    createdAt: new Date(),
-    ...partnerData
-  };
-  mockPartners[id] = newPartner;
-  return newPartner;
+  if (updatedData.bankDetails && updatedData.bankDetails.accountNumber) {
+    updatedData.bankDetails.accountNumber = encryptText(updatedData.bankDetails.accountNumber);
+  }
+  
+  const partner = new Partner(updatedData);
+  const savedPartner = await partner.save();
+  return decryptPartnerData(savedPartner);
 };
 
 const findPartnerById = async (id) => {
-  if (isDbConnected()) {
-    try {
-      return await Partner.findById(id);
-    } catch (err) {
-      console.error('MongoDB Error in findPartnerById:', err);
-    }
-  }
-
-  // Fallback to in-memory
-  console.log(`[DB Fallback] Finding partner by ID: ${id}`);
-  return mockPartners[id] || null;
+  enforceDbConnection();
+  const partner = await Partner.findById(id);
+  return decryptPartnerData(partner);
 };
 
 const updatePartnerById = async (id, updateData) => {
-  if (isDbConnected()) {
-    try {
-      return await Partner.findByIdAndUpdate(id, updateData, { new: true });
-    } catch (err) {
-      console.error('MongoDB Error in updatePartnerById:', err);
-    }
+  enforceDbConnection();
+  
+  const updatedData = { ...updateData };
+  if (updatedData.documents && updatedData.documents.idProof) {
+    updatedData.documents.idProof = encryptText(updatedData.documents.idProof);
+  }
+  if (updatedData.bankDetails && updatedData.bankDetails.accountNumber) {
+    updatedData.bankDetails.accountNumber = encryptText(updatedData.bankDetails.accountNumber);
   }
 
-  // Fallback to in-memory
-  console.log(`[DB Fallback] Updating partner ${id} in memory:`, updateData);
-  if (mockPartners[id]) {
-    const partner = mockPartners[id];
-    
-    // Merge nested fields (like documents) or update top-level fields
-    Object.keys(updateData).forEach(key => {
-      if (typeof updateData[key] === 'object' && updateData[key] !== null && !Array.isArray(updateData[key])) {
-        partner[key] = { ...partner[key], ...updateData[key] };
-      } else {
-        partner[key] = updateData[key];
-      }
-    });
-    
-    return partner;
-  }
-  return null;
+  const partner = await Partner.findByIdAndUpdate(id, updatedData, { new: true });
+  return decryptPartnerData(partner);
 };
 
 const findNearestOnlinePartners = async (lat, lng, category, maxDistanceMeters = 3000) => {
-  if (isDbConnected()) {
-    try {
-      return await Partner.find({
-        isOnline: true,
-        serviceCategory: category,
-        location: {
-          $near: {
-            $geometry: {
-              type: 'Point',
-              coordinates: [lng, lat]
-            },
-            $maxDistance: maxDistanceMeters
-          }
-        }
-      });
-    } catch (err) {
-      console.error('MongoDB Error in findNearestOnlinePartners:', err);
+  enforceDbConnection();
+  const partners = await Partner.find({
+    isOnline: true,
+    walletBalance: { $gt: -500 }, // Filter out suspended partners (balance <= -500)
+    serviceCategory: category,
+    location: {
+      $near: {
+        $geometry: {
+          type: 'Point',
+          coordinates: [lng, lat]
+        },
+        $maxDistance: maxDistanceMeters
+      }
     }
-  }
-  return [];
+  });
+  return partners.map(decryptPartnerData);
 };
 
 const createTransaction = async (transactionData) => {
-  if (isDbConnected()) {
-    try {
-      const transaction = new Transaction(transactionData);
-      return await transaction.save();
-    } catch (err) {
-      console.error('MongoDB Error in createTransaction:', err);
-    }
-  }
-
-  // Fallback to in-memory
-  console.log('[DB Fallback] Creating transaction in memory:', transactionData);
-  const newTransaction = {
-    _id: 'mock_tx_' + Math.random().toString(36).substr(2, 9),
-    createdAt: new Date(),
-    ...transactionData
-  };
-  mockTransactions.push(newTransaction);
-  return newTransaction;
+  enforceDbConnection();
+  const transaction = new Transaction(transactionData);
+  return await transaction.save();
 };
 
 const getPartnerTransactions = async (partnerId) => {
-  if (isDbConnected()) {
+  enforceDbConnection();
+  return await Transaction.find({ partnerId }).sort({ createdAt: -1 });
+};
+
+// Helper function to decrypt partner sensitive data before returning to code (never plain Aadhaar in DB)
+function decryptPartnerData(partner) {
+  if (!partner) return null;
+  
+  // Handle mongoose document mapping
+  const partnerObj = partner.toObject ? partner.toObject() : partner;
+  
+  if (partnerObj.documents && partnerObj.documents.idProof) {
     try {
-      return await Transaction.find({ partnerId }).sort({ createdAt: -1 });
-    } catch (err) {
-      console.error('MongoDB Error in getPartnerTransactions:', err);
+      partnerObj.documents.idProof = decryptText(partnerObj.documents.idProof);
+    } catch (e) {
+      console.error('Failed to decrypt Aadhaar ID:', e.message);
     }
   }
-
-  // Fallback to in-memory
-  console.log(`[DB Fallback] Fetching transactions in memory for partner: ${partnerId}`);
-  return mockTransactions
-    .filter(tx => tx.partnerId.toString() === partnerId.toString())
-    .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
-};
+  if (partnerObj.bankDetails && partnerObj.bankDetails.accountNumber) {
+    try {
+      partnerObj.bankDetails.accountNumber = decryptText(partnerObj.bankDetails.accountNumber);
+    } catch (e) {
+      console.error('Failed to decrypt bank account number:', e.message);
+    }
+  }
+  
+  return partnerObj;
+}
 
 module.exports = {
   isDbConnected,
@@ -165,6 +144,6 @@ module.exports = {
   findNearestOnlinePartners,
   createTransaction,
   getPartnerTransactions,
-  mockPartners,
-  mockTransactions
+  encryptText,
+  decryptText
 };

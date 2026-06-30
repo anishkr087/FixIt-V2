@@ -4,8 +4,9 @@ import MapView, { Marker, Polyline, Circle } from 'react-native-maps';
 import { MapPin, Navigation, CheckCircle, Clock, Truck, PlayCircle, PowerOff, Shield } from 'lucide-react-native';
 import { io, Socket } from 'socket.io-client';
 import * as Location from 'expo-location';
+import axios from 'axios';
 import { colors } from '../theme/colors';
-import { useAuth } from '../context/AuthContext';
+import { useAuth, API_URL } from '../context/AuthContext';
 
 const { width, height } = Dimensions.get('window');
 const SOCKET_URL = process.env.EXPO_PUBLIC_SOCKET_URL || 'http://192.168.31.254:5000'; 
@@ -21,8 +22,55 @@ export default function PartnerHomeScreen({ navigation }: any) {
   const [loading, setLoading] = useState(true);
   const [timeLeft, setTimeLeft] = useState(30);
   const [currentLocation, setCurrentLocation] = useState<Location.LocationObject | null>(null);
+  
+  const [walletBalance, setWalletBalance] = useState<number>(0);
+  const [fetchingWallet, setFetchingWallet] = useState<boolean>(true);
 
-  const { partnerInfo, logout } = useAuth();
+  const { partnerInfo, logout, token } = useAuth();
+
+  const fetchWalletBalance = async () => {
+    try {
+      const response = await axios.get(`${API_URL}/partner/earnings`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setWalletBalance(response.data.walletBalance);
+      
+      // Force offline if suspended
+      if (response.data.walletBalance <= -500 && isOnlineRef.current) {
+        setIsOnline(false);
+        socketRef.current?.emit('go_offline', { partnerId: partnerInfo?._id });
+      }
+    } catch (e) {
+      console.log('Failed to fetch wallet balance on home screen:', e);
+    } finally {
+      setFetchingWallet(false);
+    }
+  };
+
+  const handlePayDues = async () => {
+    try {
+      setLoading(true);
+      const response = await axios.post(`${API_URL}/partner/clear-dues`, {}, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      Alert.alert('Payment Successful ✅', 'Outstanding dues cleared successfully. Your account is now active.');
+      setWalletBalance(response.data.walletBalance);
+    } catch (e: any) {
+      console.log('Failed to pay dues:', e);
+      Alert.alert('Payment Failed', e.response?.data?.error || 'Payment failed. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchWalletBalance();
+    
+    const unsubscribe = navigation.addListener('focus', () => {
+      fetchWalletBalance();
+    });
+    return unsubscribe;
+  }, [navigation]);
   
   // Membership settings (Commented out for future update)
   // const [selectedTier, setSelectedTier] = useState<'basic' | 'silver' | 'gold'>(partnerInfo?.membershipTier || 'basic');
@@ -127,9 +175,11 @@ export default function PartnerHomeScreen({ navigation }: any) {
     );
 
     // 3. Setup Socket
-    socketRef.current = io(SOCKET_URL);
+    socketRef.current = io(SOCKET_URL, {
+      auth: { token }
+    });
     socketRef.current.on('connect', () => {
-      console.log('Connected to socket server:', socketRef.current?.id);
+      console.log('Connected to socket server with auth token:', socketRef.current?.id);
     });
 
     socketRef.current.on('new_job_broadcast', (jobData: any) => {
@@ -141,6 +191,10 @@ export default function PartnerHomeScreen({ navigation }: any) {
 
     socketRef.current.on('job_assigned_to_other', () => {
       handleDeclineJob(); 
+    });
+
+    socketRef.current.on('error_notification', (msg: string) => {
+      Alert.alert('Account Status', msg);
     });
   };
 
@@ -238,6 +292,39 @@ export default function PartnerHomeScreen({ navigation }: any) {
     { latitude: acceptedJob.lat, longitude: acceptedJob.lng }
   ] : [];
 
+  if (walletBalance <= -500) {
+    return (
+      <SafeAreaView style={[styles.container, styles.suspendedContainer]}>
+        <View style={styles.suspendedContent}>
+          <View style={styles.suspendedIconContainer}>
+            <Shield size={48} color={colors.error} />
+          </View>
+          <Text style={styles.suspendedTitle}>Account Suspended</Text>
+          <Text style={styles.suspendedSubtitle}>
+            Your partner profile is suspended because your wallet balance has reached the maximum overdraft limit of -₹500.
+          </Text>
+          
+          <View style={styles.dueCard}>
+            <Text style={styles.dueLabel}>Outstanding Balance</Text>
+            <Text style={styles.dueValue}>₹{walletBalance}</Text>
+          </View>
+
+          <TouchableOpacity style={styles.payDuesButton} onPress={handlePayDues} disabled={loading}>
+            {loading ? (
+              <ActivityIndicator color="#FFF" />
+            ) : (
+              <Text style={styles.payDuesButtonText}>Pay Outstanding Balance (₹{Math.abs(walletBalance)})</Text>
+            )}
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.suspendedLogoutBtn} onPress={logout}>
+            <Text style={styles.suspendedLogoutBtnText}>Logout</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   return (
     <View style={styles.container}>
       <MapView
@@ -297,7 +384,7 @@ export default function PartnerHomeScreen({ navigation }: any) {
 
       <SafeAreaView style={styles.topBarContainer}>
         <View style={styles.topBar}>
-          <TouchableOpacity onPress={handleToggleOnline} style={styles.statusBadge} disabled={!!acceptedJob}>
+          <TouchableOpacity onPress={handleToggleOnline} style={styles.statusBadge} disabled={!!acceptedJob || walletBalance <= -500}>
             <View style={[styles.statusDot, { backgroundColor: isOnline ? colors.success : colors.textSecondary }]} />
             <Text style={styles.statusText}>{isOnline ? 'Online' : 'Offline'}</Text>
           </TouchableOpacity>
@@ -305,6 +392,15 @@ export default function PartnerHomeScreen({ navigation }: any) {
             <Text style={styles.logoutText}>Logout</Text>
           </TouchableOpacity>
         </View>
+
+        {/* Warning Banner for Low Balance (wallet <= -300 and > -500) */}
+        {walletBalance <= -300 && walletBalance > -500 && (
+          <View style={styles.warningBanner}>
+            <Text style={styles.warningBannerText}>
+              ⚠️ Warning: Low wallet balance (₹{walletBalance}). Clear outstanding dues soon to avoid account suspension (threshold: -₹500).
+            </Text>
+          </View>
+        )}
 
         {/* FUTURE UPDATE: Membership Tier selector overlay
         <View style={styles.membershipSelectorBar}>
@@ -507,5 +603,109 @@ const styles = StyleSheet.create({
   },
   tierTabTextActive: {
     color: '#FFFFFF',
+  },
+  warningBanner: {
+    backgroundColor: '#FEF3C7',
+    marginHorizontal: 20,
+    marginTop: 10,
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#F59E0B',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 5,
+    elevation: 2,
+  },
+  warningBannerText: {
+    color: '#D97706',
+    fontSize: 12,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    lineHeight: 18,
+  },
+  suspendedContainer: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: colors.background,
+    padding: 24,
+  },
+  suspendedContent: {
+    width: '100%',
+    backgroundColor: colors.card,
+    borderRadius: 24,
+    padding: 24,
+    alignItems: 'center',
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
+  },
+  suspendedIconContainer: {
+    width: 96,
+    height: 96,
+    borderRadius: 48,
+    backgroundColor: '#FEE2E2',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  suspendedTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: colors.error,
+    marginBottom: 12,
+    textAlign: 'center',
+  },
+  suspendedSubtitle: {
+    fontSize: 15,
+    color: colors.textSecondary,
+    textAlign: 'center',
+    lineHeight: 22,
+    marginBottom: 24,
+  },
+  dueCard: {
+    width: '100%',
+    backgroundColor: '#F8FAFC',
+    borderRadius: 16,
+    padding: 20,
+    alignItems: 'center',
+    marginBottom: 24,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  dueLabel: {
+    fontSize: 14,
+    color: colors.textSecondary,
+    marginBottom: 6,
+  },
+  dueValue: {
+    fontSize: 32,
+    fontWeight: 'bold',
+    color: colors.error,
+  },
+  payDuesButton: {
+    width: '100%',
+    height: 56,
+    backgroundColor: colors.primary,
+    borderRadius: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  payDuesButtonText: {
+    color: '#FFF',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  suspendedLogoutBtn: {
+    paddingVertical: 12,
+  },
+  suspendedLogoutBtnText: {
+    color: colors.textSecondary,
+    fontSize: 15,
+    fontWeight: '600',
   },
 });

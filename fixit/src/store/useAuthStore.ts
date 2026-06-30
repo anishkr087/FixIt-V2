@@ -7,6 +7,7 @@ interface AuthState {
   isLoginModalVisible: boolean;
   hasSeenInitialLogin: boolean;
   user: { name?: string; location?: string; phone: string; email?: string } | null;
+  token: string | null;
   login: (phone: string) => Promise<void>;
   verifyOtp: (phone: string, code: string) => Promise<boolean>;
   completeLogin: () => void;
@@ -22,6 +23,7 @@ export const useAuthStore = create<AuthState>((set) => ({
   isLoginModalVisible: false,
   hasSeenInitialLogin: false,
   user: null,
+  token: null,
   login: async (phone) => {
     try {
       console.log(`[Auth API] Sending OTP request for phone: ${phone}`);
@@ -49,7 +51,8 @@ export const useAuthStore = create<AuthState>((set) => ({
         body: JSON.stringify({ phone, otp: code })
       });
       const data = await response.json();
-      if (response.ok && data.success) {
+      if (response.ok && data.success && data.token) {
+        set({ token: data.token });
         return true;
       }
       return false;
@@ -61,7 +64,7 @@ export const useAuthStore = create<AuthState>((set) => ({
   completeLogin: () => {
     set({ isAuthenticated: true, isLoginModalVisible: false });
   },
-  logout: () => set({ isAuthenticated: false, user: null }),
+  logout: () => set({ isAuthenticated: false, user: null, token: null }),
   updateProfile: (name, location, email) => set((state) => ({
     user: state.user ? { ...state.user, name, location, email } : null
   })),

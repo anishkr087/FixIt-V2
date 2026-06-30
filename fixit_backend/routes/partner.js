@@ -133,4 +133,44 @@ router.post('/withdraw', authMiddleware, async (req, res) => {
   }
 });
 
+// Clear outstanding negative balance (pay dues)
+router.post('/clear-dues', authMiddleware, async (req, res) => {
+  try {
+    const partner = await dbHelper.findPartnerById(req.partnerId);
+    if (!partner) return res.status(404).json({ error: 'Partner not found' });
+
+    if (partner.walletBalance >= 0) {
+      return res.status(400).json({ error: 'No outstanding dues to pay.' });
+    }
+
+    const amountPaid = Math.abs(partner.walletBalance);
+
+    // Update wallet balance to 0
+    const updatedPartner = await dbHelper.updatePartnerById(req.partnerId, {
+      walletBalance: 0
+    });
+
+    // Create platform payout transaction record
+    await dbHelper.createTransaction({
+      partnerId: req.partnerId,
+      type: 'earning', // recorded as credit recharge
+      amount: amountPaid,
+      description: 'Cleared Outstanding Platform Dues'
+    });
+
+    // Fetch updated transaction list
+    const transactions = await dbHelper.getPartnerTransactions(req.partnerId);
+
+    res.json({
+      message: 'Outstanding dues cleared successfully.',
+      walletBalance: 0,
+      partner: updatedPartner,
+      transactions
+    });
+  } catch (err) {
+    console.error('Failed to clear dues:', err);
+    res.status(500).json({ error: 'Failed to process payment' });
+  }
+});
+
 module.exports = router;

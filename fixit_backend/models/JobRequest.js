@@ -10,6 +10,7 @@ const JobRequestSchema = new mongoose.Schema({
     default: 'pending'
   },
   assignedPartner: { type: mongoose.Schema.Types.ObjectId, ref: 'Partner', default: null },
+  paymentMethod: { type: String, enum: ['UPI', 'COD'], default: 'COD' },
   customerLocation: {
     type: { type: String, default: 'Point' },
     coordinates: { type: [Number], required: true } // [longitude, latitude]
