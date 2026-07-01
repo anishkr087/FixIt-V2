@@ -60,11 +60,17 @@ app.get('/api/db-status', (req, res) => {
     3: 'disconnecting',
     99: 'uninitialized'
   };
+  
+  const uri = process.env.MONGODB_URI || '';
+  const match = uri.match(/\/\/([^:]+):/);
+  const username = match ? match[1] : 'unknown';
+
   res.json({
     readyState: state,
     status: states[state] || 'unknown',
     host: mongoose.connection.host,
     name: mongoose.connection.name,
+    username: username,
     uri: process.env.MONGODB_URI ? process.env.MONGODB_URI.replace(/\/\/.*@/, '//****@') : 'using default localhost',
     error: lastDbError
   });
