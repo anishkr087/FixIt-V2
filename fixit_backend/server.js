@@ -42,6 +42,24 @@ app.use('/api/partner', partnerRoutes);
 
 app.get('/', (req, res) => res.send('FixIt Secure Backend Running.'));
 
+app.get('/api/db-status', (req, res) => {
+  const state = mongoose.connection.readyState;
+  const states = {
+    0: 'disconnected',
+    1: 'connected',
+    2: 'connecting',
+    3: 'disconnecting',
+    99: 'uninitialized'
+  };
+  res.json({
+    readyState: state,
+    status: states[state] || 'unknown',
+    host: mongoose.connection.host,
+    name: mongoose.connection.name,
+    uri: process.env.MONGODB_URI ? process.env.MONGODB_URI.replace(/\/\/.*@/, '//****@') : 'using default localhost'
+  });
+});
+
 // Registry of active online partners
 const activePartners = {};
 // Registry of active jobs & socket mappings for customers
