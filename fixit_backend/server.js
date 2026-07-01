@@ -28,10 +28,19 @@ app.use(cors({
 }));
 app.use(express.json());
 
+let lastDbError = null;
+mongoose.connection.on('error', err => {
+  console.error('Mongoose connection error:', err);
+  lastDbError = err.message || err.toString();
+});
+
 // MongoDB Connection
 mongoose.connect(process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/fixit_partner')
   .then(() => console.log('MongoDB Connected'))
-  .catch(err => console.error('MongoDB Connection Error:', err));
+  .catch(err => {
+    console.error('MongoDB Connection Error:', err);
+    lastDbError = err.message || err.toString();
+  });
 
 // Routes
 const authRoutes = require('./routes/auth');
@@ -56,7 +65,8 @@ app.get('/api/db-status', (req, res) => {
     status: states[state] || 'unknown',
     host: mongoose.connection.host,
     name: mongoose.connection.name,
-    uri: process.env.MONGODB_URI ? process.env.MONGODB_URI.replace(/\/\/.*@/, '//****@') : 'using default localhost'
+    uri: process.env.MONGODB_URI ? process.env.MONGODB_URI.replace(/\/\/.*@/, '//****@') : 'using default localhost',
+    error: lastDbError
   });
 });
 
