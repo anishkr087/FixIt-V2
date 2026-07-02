@@ -3,7 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import axios from 'axios';
 
 // Change to your actual local IP (e.g. 192.168.1.5) or 10.0.2.2 for Android Emulator
-export const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.31.254:5000/api';
+export const API_URL = process.env.EXPO_PUBLIC_API_URL || 'https://fixit-v2.onrender.com/api';
 
 interface AuthContextType {
   token: string | null;

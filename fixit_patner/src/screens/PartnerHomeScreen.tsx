@@ -9,7 +9,7 @@ import { colors } from '../theme/colors';
 import { useAuth, API_URL } from '../context/AuthContext';
 
 const { width, height } = Dimensions.get('window');
-const SOCKET_URL = process.env.EXPO_PUBLIC_SOCKET_URL || 'http://192.168.31.254:5000'; 
+const SOCKET_URL = process.env.EXPO_PUBLIC_SOCKET_URL || 'https://fixit-v2.onrender.com';
 
 export default function PartnerHomeScreen({ navigation }: any) {
   const [isOnline, setIsOnline] = useState(false);

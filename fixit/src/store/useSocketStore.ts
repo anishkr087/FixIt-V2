@@ -3,7 +3,7 @@ import { io, Socket } from 'socket.io-client';
 import { useAuthStore } from './useAuthStore';
 
 // The centralized socket backend URL (matching the partner app)
-const SOCKET_URL = process.env.EXPO_PUBLIC_SOCKET_URL || 'http://192.168.31.254:5000';
+const SOCKET_URL = process.env.EXPO_PUBLIC_SOCKET_URL || 'https://fixit-v2.onrender.com';
 
 interface SocketState {
   socket: Socket | null;

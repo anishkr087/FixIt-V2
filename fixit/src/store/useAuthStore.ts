@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.31.254:5000/api';
+const API_URL = process.env.EXPO_PUBLIC_API_URL || 'https://fixit-v2.onrender.com/api';
 
 interface AuthState {
   isAuthenticated: boolean;
