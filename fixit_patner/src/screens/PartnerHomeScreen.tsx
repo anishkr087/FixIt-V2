@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, Dimensions, TouchableOpacity, SafeAreaView, ActivityIndicator, Platform, Alert } from 'react-native';
-import MapView, { Marker, Polyline, Circle } from 'react-native-maps';
+// Lazy-load react-native-maps to prevent crash if native module not ready
+let MapView: any = null, Marker: any = null, Polyline: any = null, Circle: any = null;
+try { const M = require('react-native-maps'); MapView = M.default; Marker = M.Marker; Polyline = M.Polyline; Circle = M.Circle; } catch(e) { console.warn('Maps unavailable', e); }
 import { MapPin, Navigation, CheckCircle, Clock, Truck, PlayCircle, PowerOff, Shield } from 'lucide-react-native';
 import { io, Socket } from 'socket.io-client';
 import * as Location from 'expo-location';
@@ -82,15 +84,20 @@ export default function PartnerHomeScreen({ navigation }: any) {
   
   // Ref tracking to bypass React hook closure caching inside setupLocationAndSockets watchPosition callback
   const isOnlineRef = useRef(isOnline);
-  // const selectedTierRef = useRef(selectedTier); // Commented out for future update
+  const acceptedJobRef = useRef(acceptedJob);
+  const jobStatusRef = useRef(jobStatus);
 
   useEffect(() => {
     isOnlineRef.current = isOnline;
   }, [isOnline]);
 
-  // useEffect(() => {
-  //   selectedTierRef.current = selectedTier;
-  // }, [selectedTier]);
+  useEffect(() => {
+    acceptedJobRef.current = acceptedJob;
+  }, [acceptedJob]);
+
+  useEffect(() => {
+    jobStatusRef.current = jobStatus;
+  }, [jobStatus]);
 
   const getTierConfig = () => {
     /* FUTURE UPDATE:
@@ -183,7 +190,8 @@ export default function PartnerHomeScreen({ navigation }: any) {
     });
 
     socketRef.current.on('new_job_broadcast', (jobData: any) => {
-      if (!acceptedJob && !jobStatus) { 
+      // Use refs to read current state values — avoids stale closure
+      if (!acceptedJobRef.current && !jobStatusRef.current) { 
         setIncomingJob(jobData);
         startTimer();
       }

@@ -2,6 +2,7 @@ const express = require('express');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const dbHelper = require('../db_helper');
+const supabase = require('../src/config/supabase');
 
 const router = express.Router();
 
@@ -20,6 +21,12 @@ router.post('/login', async (req, res) => {
   const { phone } = req.body;
   if (!phone) return res.status(400).json({ error: 'Phone number is required' });
 
+  // Validate format and limit length to prevent DoS/memory leak attacks
+  const phoneRegex = /^(\+91)?[0-9]{10}$/;
+  if (!phoneRegex.test(phone)) {
+    return res.status(400).json({ error: 'Invalid phone number format. Must be 10 digits (with optional +91 prefix).' });
+  }
+
   const now = Date.now();
   const tracker = resendTracker[phone];
 
@@ -35,16 +42,16 @@ router.post('/login', async (req, res) => {
       // Limit to 2 resends (total 3 requests)
       if (tracker.requestsCount >= 3) {
         const minutesLeft = Math.ceil((tracker.lastRequestedAt + 15 * 60 * 1000 - now) / 60000);
-        return res.status(429).json({ 
-          error: `Maximum OTP resend limit reached. Please try again in ${minutesLeft} minutes.` 
+        return res.status(429).json({
+          error: `Maximum OTP resend limit reached. Please try again in ${minutesLeft} minutes.`
         });
       }
 
       // Check if requested too early
       if (now < tracker.nextAllowedAt) {
         const secondsLeft = Math.ceil((tracker.nextAllowedAt - now) / 1000);
-        return res.status(429).json({ 
-          error: `Please wait ${secondsLeft} seconds before requesting a new OTP.` 
+        return res.status(429).json({
+          error: `Please wait ${secondsLeft} seconds before requesting a new OTP.`
         });
       }
 
@@ -89,7 +96,7 @@ router.post('/login', async (req, res) => {
     try {
       const twilio = require('twilio');
       const client = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
-      
+
       await client.messages.create({
         body: `Your FixIt verification code is: ${otp}. Valid for 5 minutes.`,
         from: TWILIO_PHONE_NUMBER,
@@ -145,9 +152,15 @@ const validateOtp = (phone, submittedOtp) => {
 // Verify OTP (Partner Auth)
 router.post('/verify-otp', async (req, res) => {
   const { phone, otp } = req.body;
-  
+
   if (!phone || !otp) {
     return res.status(400).json({ error: 'Phone and OTP are required' });
+  }
+
+  // Validate format and limit length to prevent DoS/memory leak attacks
+  const phoneRegex = /^(\+91)?[0-9]{10}$/;
+  if (!phoneRegex.test(phone)) {
+    return res.status(400).json({ error: 'Invalid phone number format.' });
   }
 
   const isValid = validateOtp(phone, otp);
@@ -171,11 +184,11 @@ router.post('/verify-otp', async (req, res) => {
     }
 
     const token = jwt.sign(
-      { id: partner._id, type: 'partner' }, 
-      process.env.JWT_SECRET || 'fallback_secret_longer_key_needed_32', 
+      { id: partner._id, type: 'partner' },
+      process.env.JWT_SECRET || 'fallback_secret_longer_key_needed_32',
       { expiresIn: '30d' }
     );
-    
+
     res.json({ token, partner, isNewUser });
   } catch (err) {
     console.error('Error verifying OTP:', err);
@@ -191,19 +204,123 @@ router.post('/verify-otp-customer', async (req, res) => {
     return res.status(400).json({ error: 'Phone and OTP are required' });
   }
 
+  // Validate format and limit length to prevent DoS/memory leak attacks
+  const phoneRegex = /^(\+91)?[0-9]{10}$/;
+  if (!phoneRegex.test(phone)) {
+    return res.status(400).json({ error: 'Invalid phone number format.' });
+  }
+
   const isValid = validateOtp(phone, otp);
   if (!isValid) {
     return res.status(401).json({ error: 'Invalid, expired, or locked OTP. Please try again.' });
   }
 
-  // Issue a secure JWT token for customers
-  const token = jwt.sign(
-    { id: phone, type: 'customer' },
-    process.env.JWT_SECRET || 'fallback_secret_longer_key_needed_32',
-    { expiresIn: '30d' }
-  );
+  try {
+    // Find or create customer
+    let customer = null;
+    const { data: selectData, error: selectError } = await supabase
+      .from('customers')
+      .select('*')
+      .eq('phone', phone)
+      .maybeSingle();
 
-  res.json({ success: true, message: 'OTP verified successfully', token });
+    if (selectError) throw selectError;
+    customer = selectData;
+
+    if (!customer) {
+      const { data: insertData, error: insertError } = await supabase
+        .from('customers')
+        .insert({ phone })
+        .select('*')
+        .single();
+      if (insertError) throw insertError;
+      customer = insertData;
+    }
+
+    // Issue a secure JWT token for customers
+    const token = jwt.sign(
+      { id: phone, type: 'customer' },
+      process.env.JWT_SECRET || 'fallback_secret_longer_key_needed_32',
+      { expiresIn: '30d' }
+    );
+
+    res.json({ 
+      success: true, 
+      message: 'OTP verified successfully', 
+      token,
+      user: {
+        phone: customer.phone,
+        name: customer.name || '',
+        email: customer.email || '',
+        location: customer.location || ''
+      }
+    });
+  } catch (err) {
+    console.error('Error in customer verify OTP:', err);
+    res.status(500).json({ error: 'Failed to authenticate user.' });
+  }
+});
+
+// Update Customer Profile
+router.post('/profile', async (req, res) => {
+  const { phone, name, location, email } = req.body;
+
+  if (!phone) {
+    return res.status(400).json({ error: 'Phone number is required' });
+  }
+
+  const phoneRegex = /^(\+91)?[0-9]{10}$/;
+  if (!phoneRegex.test(phone)) {
+    return res.status(400).json({ error: 'Invalid phone number format.' });
+  }
+
+  try {
+    const updateData = {};
+    if (name !== undefined) updateData.name = name;
+    if (location !== undefined) updateData.location = location;
+    if (email !== undefined) updateData.email = email;
+
+    const { data: selectData, error: selectError } = await supabase
+      .from('customers')
+      .select('*')
+      .eq('phone', phone)
+      .maybeSingle();
+
+    if (selectError) throw selectError;
+    
+    let customer;
+    if (!selectData) {
+      const { data: insertData, error: insertError } = await supabase
+        .from('customers')
+        .insert({ phone, ...updateData })
+        .select('*')
+        .single();
+      if (insertError) throw insertError;
+      customer = insertData;
+    } else {
+      const { data: updateRes, error: updateError } = await supabase
+        .from('customers')
+        .update(updateData)
+        .eq('phone', phone)
+        .select('*')
+        .single();
+      if (updateError) throw updateError;
+      customer = updateRes;
+    }
+
+    res.json({
+      success: true,
+      user: {
+        phone: customer.phone,
+        name: customer.name || '',
+        email: customer.email || '',
+        location: customer.location || ''
+      }
+    });
+  } catch (err) {
+    console.error('Error updating customer profile:', err);
+    res.status(500).json({ error: 'Failed to update profile.' });
+  }
 });
 
 module.exports = router;

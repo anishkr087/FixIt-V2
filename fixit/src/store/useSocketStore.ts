@@ -19,6 +19,11 @@ export const useSocketStore = create<SocketState>((set, get) => ({
     if (get().socket) return;
     
     const token = useAuthStore.getState().token;
+    if (!token) {
+      console.log('Skipping socket connection: User token not available yet.');
+      return;
+    }
+    
     console.log('Connecting user socket with auth token to:', SOCKET_URL);
     const socketInstance = io(SOCKET_URL, {
       auth: { token }
@@ -44,3 +49,17 @@ export const useSocketStore = create<SocketState>((set, get) => ({
     }
   }
 }));
+
+// Subscribe to auth token changes to auto-connect/disconnect socket
+useAuthStore.subscribe((state) => {
+  const token = state.token;
+  const isConnected = useSocketStore.getState().isConnected;
+  const socket = useSocketStore.getState().socket;
+
+  if (token && !socket) {
+    useSocketStore.getState().connect();
+  } else if (!token && socket) {
+    useSocketStore.getState().disconnect();
+  }
+});
+

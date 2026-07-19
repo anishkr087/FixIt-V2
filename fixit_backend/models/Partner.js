@@ -19,6 +19,7 @@ const PartnerSchema = new mongoose.Schema({
   jobsCompleted: { type: Number, default: 0 },
   walletBalance: { type: Number, default: 0 },
   isOnline: { type: Boolean, default: false },
+  kycVerified: { type: Boolean, default: false },
   // membershipTier: { type: String, enum: ['basic', 'silver', 'gold'], default: 'basic' }, // Commented for future update
   membershipTier: { type: String, default: 'basic' },
   location: {

@@ -25,9 +25,10 @@ export default function LoginScreen() {
     if (phoneNumber.length >= 10) {
       try {
         setLoading(true);
+        const formattedPhone = `+91${phoneNumber}`;
         // Hit our new Node.js backend
-        await axios.post(`${API_URL}/auth/login`, { phone: phoneNumber });
-        navigation.navigate('Otp', { phone: phoneNumber });
+        await axios.post(`${API_URL}/auth/login`, { phone: formattedPhone });
+        navigation.navigate('Otp', { phone: formattedPhone });
       } catch (e) {
         alert('Failed to send OTP');
       } finally {

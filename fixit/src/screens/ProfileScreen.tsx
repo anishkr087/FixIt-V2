@@ -1,30 +1,50 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, TextInput, ScrollView, Platform } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { View, Text, StyleSheet, TouchableOpacity, TextInput, ScrollView, Platform, Alert, ActivityIndicator } from 'react-native';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useForm, Controller, FieldError } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
 import { useAuthStore } from '../store/useAuthStore';
 import { colors } from '../theme/colors';
+import { profileSchema, ProfileFormValues } from '../features/profile/validators/profileSchema';
+import { useProfileMutation } from '../features/profile/api/useProfile';
 
 export const ProfileScreen = () => {
-  const { user, logout, isAuthenticated, showLoginModal, updateProfile } = useAuthStore();
+  const insets = useSafeAreaInsets();
+  const bottomPadding = insets.bottom > 0 ? insets.bottom : 12;
+  const tabBarHeight = 60 + bottomPadding;
+
+  const { user, logout, isAuthenticated, showLoginModal } = useAuthStore();
   const [isEditing, setIsEditing] = useState(false);
-  const [editName, setEditName] = useState('');
-  const [editEmail, setEditEmail] = useState('');
-  const [editPhone, setEditPhone] = useState('');
+
+  const profileMutation = useProfileMutation();
+
+  const { control, handleSubmit, setValue, formState: { errors } } = useForm<ProfileFormValues>({
+    resolver: zodResolver(profileSchema),
+    defaultValues: {
+      name: user?.name || '',
+      email: user?.email || '',
+      location: user?.location || '',
+    },
+  });
 
   // Sync state if user loads later
   useEffect(() => {
     if (user && !isEditing) {
-      setEditName(user.name || 'Priya Mehta');
-      setEditEmail(user.email || 'priya.mehta@gmail.com');
-      setEditPhone(user.phone || '+91 98765 43210');
+      setValue('name', user.name || '');
+      setValue('email', user.email || '');
+      setValue('location', user.location || '');
     }
   }, [user, isEditing]);
 
-  const handleSave = () => {
-    updateProfile(editName, user?.location || '', editEmail);
-    setIsEditing(false);
+  const onSubmit = async (values: ProfileFormValues) => {
+    try {
+      await profileMutation.mutateAsync(values);
+      setIsEditing(false);
+    } catch (err: any) {
+      Alert.alert('Error', err.message || 'Failed to save profile. Please try again.');
+    }
   };
 
   if (!isAuthenticated) {
@@ -40,7 +60,7 @@ export const ProfileScreen = () => {
   }
 
   const getInitials = (nameStr: string) => {
-    if (!nameStr) return 'PM';
+    if (!nameStr) return 'U';
     const parts = nameStr.trim().split(' ');
     if (parts.length >= 2) {
       return (parts[0][0] + parts[1][0]).toUpperCase();
@@ -50,7 +70,7 @@ export const ProfileScreen = () => {
 
   return (
     <View style={styles.container}>
-      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+      <ScrollView contentContainerStyle={[styles.scrollContent, { paddingBottom: tabBarHeight + 20 }]} showsVerticalScrollIndicator={false}>
         {/* Profile Header Gradient */}
         <LinearGradient
           colors={['#FF8A00', '#FF5E14']}
@@ -63,10 +83,10 @@ export const ProfileScreen = () => {
               {/* Initials Avatar Box */}
               <View style={styles.avatarContainer}>
                 <View style={styles.avatarBox}>
-                  <Text style={styles.avatarText}>{getInitials(user?.name || 'Priya Mehta')}</Text>
+                  <Text style={styles.avatarText}>{getInitials(user?.name || '')}</Text>
                 </View>
-                <TouchableOpacity 
-                  style={styles.editAvatarBtn} 
+                <TouchableOpacity
+                  style={styles.editAvatarBtn}
                   activeOpacity={0.8}
                   onPress={() => setIsEditing(true)}
                 >
@@ -76,8 +96,8 @@ export const ProfileScreen = () => {
 
               {/* User Metadata */}
               <View style={styles.userMetaContainer}>
-                <Text style={styles.userName}>{user?.name || 'Priya Mehta'}</Text>
-                <Text style={styles.userEmail}>{user?.email || 'priya.mehta@gmail.com'}</Text>
+                <Text style={styles.userName}>{user?.name || 'Guest User'}</Text>
+                <Text style={styles.userEmail}>{user?.email || 'No email provided'}</Text>
                 <View style={styles.verifiedRow}>
                   <Ionicons name="shield-checkmark" size={12} color="#FFF" />
                   <Text style={styles.verifiedText}>Verified Account</Text>
@@ -124,8 +144,8 @@ export const ProfileScreen = () => {
           <View style={styles.infoSectionHeader}>
             <Text style={styles.infoSectionTitle}>Personal Info</Text>
             {!isEditing ? (
-              <TouchableOpacity 
-                style={styles.editToggleBtn} 
+              <TouchableOpacity
+                style={styles.editToggleBtn}
                 onPress={() => setIsEditing(true)}
                 activeOpacity={0.7}
               >
@@ -139,50 +159,60 @@ export const ProfileScreen = () => {
           <View style={styles.infoCard}>
             {isEditing ? (
               <View style={styles.formContainer}>
-                <View style={styles.inputGroup}>
-                  <Text style={styles.fieldLabel}>FULL NAME</Text>
-                  <TextInput
-                    style={styles.formInput}
-                    value={editName}
-                    onChangeText={setEditName}
-                    placeholder="Enter full name"
-                    placeholderTextColor={colors.textSecondary}
-                  />
-                </View>
-                
+                <FormInputField
+                  label="FULL NAME"
+                  name="name"
+                  control={control}
+                  error={errors.name}
+                  placeholder="Enter full name"
+                />
+
                 <View style={styles.inputGroup}>
                   <Text style={styles.fieldLabel}>PHONE NUMBER</Text>
                   <TextInput
-                    style={styles.formInput}
-                    value={editPhone}
-                    onChangeText={setEditPhone}
-                    placeholder="Enter phone number"
+                    style={[styles.formInput, { color: colors.textSecondary }]}
+                    value={user?.phone || ''}
+                    editable={false}
                     placeholderTextColor={colors.textSecondary}
-                    keyboardType="phone-pad"
                   />
                 </View>
 
-                <View style={styles.inputGroup}>
-                  <Text style={styles.fieldLabel}>EMAIL ADDRESS</Text>
-                  <TextInput
-                    style={styles.formInput}
-                    value={editEmail}
-                    onChangeText={setEditEmail}
-                    placeholder="Enter email address"
-                    placeholderTextColor={colors.textSecondary}
-                    autoCapitalize="none"
-                    keyboardType="email-address"
-                  />
-                </View>
+                <FormInputField
+                  label="EMAIL ADDRESS"
+                  name="email"
+                  control={control}
+                  error={errors.email}
+                  placeholder="Enter email address"
+                  autoCapitalize="none"
+                  keyboardType="email-address"
+                />
+
+                <FormInputField
+                  label="CITY / LOCATION"
+                  name="location"
+                  control={control}
+                  error={errors.location}
+                  placeholder="Enter city / location"
+                />
 
                 <View style={styles.formActions}>
-                  <TouchableOpacity style={styles.saveBtn} onPress={handleSave} activeOpacity={0.8}>
-                    <Text style={styles.saveBtnText}>Save</Text>
-                  </TouchableOpacity>
                   <TouchableOpacity 
-                    style={[styles.saveBtn, { backgroundColor: colors.textSecondary }]} 
+                    style={styles.saveBtn} 
+                    onPress={handleSubmit(onSubmit)} 
+                    activeOpacity={0.8}
+                    disabled={profileMutation.isPending}
+                  >
+                    {profileMutation.isPending ? (
+                      <ActivityIndicator color="#FFF" size="small" />
+                    ) : (
+                      <Text style={styles.saveBtnText}>Save</Text>
+                    )}
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.saveBtn, { backgroundColor: colors.textSecondary }]}
                     onPress={() => setIsEditing(false)}
                     activeOpacity={0.8}
+                    disabled={profileMutation.isPending}
                   >
                     <Text style={styles.saveBtnText}>Cancel</Text>
                   </TouchableOpacity>
@@ -190,49 +220,109 @@ export const ProfileScreen = () => {
               </View>
             ) : (
               <View>
-                <View style={styles.infoRow}>
-                  <Text style={styles.fieldLabel}>FULL NAME</Text>
-                  <Text style={styles.fieldValue}>{user?.name || 'Priya Mehta'}</Text>
-                </View>
+                <InfoRow label="FULL NAME" value={user?.name || 'Not set'} />
                 <View style={styles.infoRowDivider} />
-                <View style={styles.infoRow}>
-                  <Text style={styles.fieldLabel}>PHONE NUMBER</Text>
-                  <Text style={styles.fieldValue}>{user?.phone || '+91 98765 43210'}</Text>
-                </View>
+                <InfoRow label="PHONE NUMBER" value={user?.phone || 'Not set'} />
                 <View style={styles.infoRowDivider} />
-                <View style={styles.infoRow}>
-                  <Text style={styles.fieldLabel}>EMAIL ADDRESS</Text>
-                  <Text style={styles.fieldValue}>{user?.email || 'priya.mehta@gmail.com'}</Text>
-                </View>
+                <InfoRow label="EMAIL ADDRESS" value={user?.email || 'Not set'} />
+                <View style={styles.infoRowDivider} />
+                <InfoRow label="CITY / LOCATION" value={user?.location || 'Not set'} />
               </View>
             )}
           </View>
 
           {/* Action Menu */}
           <View style={styles.secondaryMenu}>
-            <TouchableOpacity style={styles.menuItem} activeOpacity={0.7}>
-              <Ionicons name="location-outline" size={22} color={colors.textPrimary} style={{ width: 28 }} />
-              <Text style={styles.menuText}>Manage Addresses</Text>
-              <Ionicons name="chevron-forward" size={18} color={colors.textSecondary} />
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.menuItem} activeOpacity={0.7}>
-              <Ionicons name="wallet-outline" size={22} color={colors.textPrimary} style={{ width: 28 }} />
-              <Text style={styles.menuText}>Payment Methods</Text>
-              <Ionicons name="chevron-forward" size={18} color={colors.textSecondary} />
-            </TouchableOpacity>
-
-            <TouchableOpacity style={[styles.menuItem, { borderBottomWidth: 0 }]} onPress={logout} activeOpacity={0.7}>
-              <Ionicons name="log-out-outline" size={22} color={colors.danger} style={{ width: 28 }} />
-              <Text style={[styles.menuText, { color: colors.danger, fontWeight: '700' }]}>Logout</Text>
-              <Ionicons name="chevron-forward" size={18} color={colors.danger} />
-            </TouchableOpacity>
+            <MenuItem icon="location-outline" text="Manage Addresses" />
+            <MenuItem icon="wallet-outline" text="Payment Methods" />
+            <MenuItem icon="log-out-outline" text="Logout" onPress={logout} isLast isDanger />
           </View>
         </View>
       </ScrollView>
     </View>
   );
 };
+
+// Generic InfoRow component to condense profile detail lists
+const InfoRow = ({ label, value }: { label: string; value: string }) => (
+  <View style={styles.infoRow}>
+    <Text style={styles.fieldLabel}>{label}</Text>
+    <Text style={styles.fieldValue}>{value}</Text>
+  </View>
+);
+
+// Generic FormInputField component with react-hook-form integration
+const FormInputField = ({
+  label,
+  name,
+  control,
+  error,
+  placeholder,
+  ...props
+}: {
+  label: string;
+  name: any;
+  control: any;
+  error?: FieldError;
+  placeholder: string;
+  [key: string]: any;
+}) => (
+  <View style={styles.inputGroup}>
+    <Text style={styles.fieldLabel}>{label}</Text>
+    <Controller
+      control={control}
+      name={name}
+      render={({ field: { onChange, onBlur, value } }) => (
+        <TextInput
+          style={[styles.formInput, error && styles.errorInput]}
+          onBlur={onBlur}
+          onChangeText={onChange}
+          value={value}
+          placeholder={placeholder}
+          placeholderTextColor={colors.textSecondary}
+          {...props}
+        />
+      )}
+    />
+    {error && <Text style={styles.errorText}>{error.message}</Text>}
+  </View>
+);
+
+// Generic MenuItem component for profile actions list
+const MenuItem = ({
+  icon,
+  text,
+  onPress,
+  isLast = false,
+  isDanger = false,
+}: {
+  icon: string;
+  text: string;
+  onPress?: () => void;
+  isLast?: boolean;
+  isDanger?: boolean;
+}) => (
+  <TouchableOpacity
+    style={[styles.menuItem, isLast && { borderBottomWidth: 0 }]}
+    onPress={onPress}
+    activeOpacity={0.7}
+  >
+    <Ionicons
+      name={icon as any}
+      size={22}
+      color={isDanger ? colors.danger : colors.textPrimary}
+      style={{ width: 28 }}
+    />
+    <Text style={[styles.menuText, isDanger && { color: colors.danger, fontWeight: '700' }]}>
+      {text}
+    </Text>
+    <Ionicons
+      name="chevron-forward"
+      size={18}
+      color={isDanger ? colors.danger : colors.textSecondary}
+    />
+  </TouchableOpacity>
+);
 
 const styles = StyleSheet.create({
   container: {
@@ -241,7 +331,6 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     flexGrow: 1,
-    paddingBottom: 110,
   },
   headerGradient: {
     paddingHorizontal: 24,
@@ -515,5 +604,14 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     borderRadius: 24,
     marginTop: 16,
+  },
+  errorInput: {
+    borderColor: colors.danger,
+  },
+  errorText: {
+    fontSize: 12,
+    color: colors.danger,
+    marginTop: 2,
+    fontWeight: '600',
   },
 });

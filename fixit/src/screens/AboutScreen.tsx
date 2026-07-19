@@ -1,13 +1,17 @@
 import React from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Linking } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
 
 export const AboutScreen = () => {
+  const insets = useSafeAreaInsets();
+  const bottomPadding = insets.bottom > 0 ? insets.bottom : 12;
+  const tabBarHeight = 60 + bottomPadding;
+
   return (
     <SafeAreaView style={styles.container}>
-      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+      <ScrollView contentContainerStyle={[styles.scrollContent, { paddingBottom: tabBarHeight + 20 }]} showsVerticalScrollIndicator={false}>
         {/* Header */}
         <View style={styles.header}>
           <Text style={styles.headerTitle}>About FixIt</Text>
@@ -64,7 +68,7 @@ export const AboutScreen = () => {
             <Ionicons name="mail" size={20} color={colors.textSecondary} style={{ width: 24 }} />
             <Text style={styles.contactText}>support@fixit.com</Text>
           </TouchableOpacity>
-          
+
           <TouchableOpacity style={styles.contactItem} onPress={() => Linking.openURL('tel:+1800123456')}>
             <Ionicons name="call" size={20} color={colors.textSecondary} style={{ width: 24 }} />
             <Text style={styles.contactText}>1800-123-456 (Toll-Free)</Text>
@@ -84,7 +88,6 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     padding: 24,
-    paddingBottom: 100, // Safe space for custom bottom tab bar
   },
   header: {
     marginBottom: 24,

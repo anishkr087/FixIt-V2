@@ -1,7 +1,5 @@
-const mongoose = require('mongoose');
 const crypto = require('crypto');
-const Partner = require('./models/Partner');
-const Transaction = require('./models/Transaction');
+const supabase = require('./src/config/supabase');
 
 // Key derivation from JWT_SECRET to ensure 32-byte key for AES-256-CBC
 const ENCRYPTION_KEY = crypto.scryptSync(process.env.JWT_SECRET || 'fallback_secret_longer_key_needed_32', 'salt', 32);
@@ -28,7 +26,8 @@ function decryptText(text) {
 }
 
 const isDbConnected = () => {
-  return mongoose.connection.readyState === 1;
+  // Returns true if Supabase URL and Key are initialized
+  return !!supabase.supabaseUrl && !!supabase.supabaseKey;
 };
 
 const enforceDbConnection = () => {
@@ -38,98 +37,214 @@ const enforceDbConnection = () => {
 };
 
 const findPartnerByPhone = async (phone) => {
-  enforceDbConnection();
-  return await Partner.findOne({ phone });
+  const { data, error } = await supabase
+    .from('partners')
+    .select('*')
+    .eq('phone', phone)
+    .maybeSingle();
+
+  if (error) {
+    console.error('Error finding partner by phone:', error.message);
+    throw error;
+  }
+  return decryptPartnerData(data);
 };
 
 const createPartner = async (partnerData) => {
-  enforceDbConnection();
+  const dataToInsert = {
+    phone: partnerData.phone,
+    kyc_verified: partnerData.kycVerified || false,
+    membership_tier: partnerData.membershipTier || 'basic'
+  };
   
-  // Encrypt sensitive document IDs if provided
-  const updatedData = { ...partnerData };
-  if (updatedData.documents && updatedData.documents.idProof) {
-    updatedData.documents.idProof = encryptText(updatedData.documents.idProof);
+  if (partnerData.documents && partnerData.documents.idProof) {
+    dataToInsert.id_proof = encryptText(partnerData.documents.idProof);
   }
-  if (updatedData.bankDetails && updatedData.bankDetails.accountNumber) {
-    updatedData.bankDetails.accountNumber = encryptText(updatedData.bankDetails.accountNumber);
+  if (partnerData.bankDetails && partnerData.bankDetails.accountNumber) {
+    dataToInsert.bank_account_number = encryptText(partnerData.bankDetails.accountNumber);
   }
-  
-  const partner = new Partner(updatedData);
-  const savedPartner = await partner.save();
-  return decryptPartnerData(savedPartner);
+
+  const { data, error } = await supabase
+    .from('partners')
+    .insert(dataToInsert)
+    .select('*')
+    .single();
+
+  if (error) {
+    console.error('Error creating partner:', error.message);
+    throw error;
+  }
+  return decryptPartnerData(data);
 };
 
 const findPartnerById = async (id) => {
-  enforceDbConnection();
-  const partner = await Partner.findById(id);
-  return decryptPartnerData(partner);
+  const { data, error } = await supabase
+    .from('partners')
+    .select('*')
+    .eq('id', id)
+    .maybeSingle();
+
+  if (error) {
+    console.error('Error finding partner by id:', error.message);
+    throw error;
+  }
+  return decryptPartnerData(data);
 };
 
 const updatePartnerById = async (id, updateData) => {
-  enforceDbConnection();
+  const dataToUpdate = {};
   
-  const updatedData = { ...updateData };
-  if (updatedData.documents && updatedData.documents.idProof) {
-    updatedData.documents.idProof = encryptText(updatedData.documents.idProof);
+  if (updateData.name !== undefined) dataToUpdate.name = updateData.name;
+  if (updateData.serviceCategory !== undefined) dataToUpdate.service_category = updateData.serviceCategory;
+  if (updateData.experience !== undefined) dataToUpdate.experience = Number(updateData.experience);
+  if (updateData.serviceArea !== undefined) dataToUpdate.service_area = updateData.serviceArea;
+  if (updateData.profilePhoto !== undefined) dataToUpdate.profile_photo = updateData.profilePhoto;
+  
+  if (updateData.documents) {
+    if (updateData.documents.idProof !== undefined) dataToUpdate.id_proof = encryptText(updateData.documents.idProof);
+    if (updateData.documents.skillCertificate !== undefined) dataToUpdate.skill_certificate = updateData.documents.skillCertificate;
   }
-  if (updatedData.bankDetails && updatedData.bankDetails.accountNumber) {
-    updatedData.bankDetails.accountNumber = encryptText(updatedData.bankDetails.accountNumber);
+  if (updateData.bankDetails) {
+    if (updateData.bankDetails.accountNumber !== undefined) dataToUpdate.bank_account_number = encryptText(updateData.bankDetails.accountNumber);
+    if (updateData.bankDetails.ifsc !== undefined) dataToUpdate.bank_ifsc = updateData.bankDetails.ifsc;
+  }
+  if (updateData.rating !== undefined) dataToUpdate.rating = Number(updateData.rating);
+  if (updateData.jobsCompleted !== undefined) dataToUpdate.jobs_completed = Number(updateData.jobsCompleted);
+  if (updateData.walletBalance !== undefined) dataToUpdate.wallet_balance = Number(updateData.walletBalance);
+  if (updateData.isOnline !== undefined) dataToUpdate.is_online = updateData.isOnline;
+  if (updateData.kycVerified !== undefined) dataToUpdate.kyc_verified = updateData.kycVerified;
+  if (updateData.membershipTier !== undefined) dataToUpdate.membership_tier = updateData.membershipTier;
+  
+  if (updateData.location && updateData.location.coordinates) {
+    dataToUpdate.location_lng = updateData.location.coordinates[0];
+    dataToUpdate.location_lat = updateData.location.coordinates[1];
   }
 
-  const partner = await Partner.findByIdAndUpdate(id, updatedData, { new: true });
-  return decryptPartnerData(partner);
+  const { data, error } = await supabase
+    .from('partners')
+    .update(dataToUpdate)
+    .eq('id', id)
+    .select('*')
+    .single();
+
+  if (error) {
+    console.error('Error updating partner by id:', error.message);
+    throw error;
+  }
+  return decryptPartnerData(data);
 };
 
 const findNearestOnlinePartners = async (lat, lng, category, maxDistanceMeters = 3000) => {
-  enforceDbConnection();
-  const partners = await Partner.find({
-    isOnline: true,
-    walletBalance: { $gt: -500 }, // Filter out suspended partners (balance <= -500)
-    serviceCategory: category,
-    location: {
-      $near: {
-        $geometry: {
-          type: 'Point',
-          coordinates: [lng, lat]
-        },
-        $maxDistance: maxDistanceMeters
-      }
-    }
-  });
-  return partners.map(decryptPartnerData);
+  const { data, error } = await supabase
+    .rpc('find_nearest_online_partners', {
+      p_lat: lat,
+      p_lng: lng,
+      p_category: category,
+      p_max_distance_meters: maxDistanceMeters
+    });
+
+  if (error) {
+    console.error('Error calling find_nearest_online_partners RPC:', error.message);
+    throw error;
+  }
+  return (data || []).map(decryptPartnerData);
 };
 
 const createTransaction = async (transactionData) => {
-  enforceDbConnection();
-  const transaction = new Transaction(transactionData);
-  return await transaction.save();
+  const { data, error } = await supabase
+    .from('transactions')
+    .insert({
+      partner_id: transactionData.partnerId,
+      job_id: transactionData.jobId,
+      type: transactionData.type,
+      amount: Number(transactionData.amount),
+      description: transactionData.description
+    })
+    .select('*')
+    .single();
+
+  if (error) {
+    console.error('Error creating transaction:', error.message);
+    throw error;
+  }
+  
+  if (data) {
+    data._id = data.id;
+  }
+  return data;
 };
 
 const getPartnerTransactions = async (partnerId) => {
-  enforceDbConnection();
-  return await Transaction.find({ partnerId }).sort({ createdAt: -1 });
+  const { data, error } = await supabase
+    .from('transactions')
+    .select('*')
+    .eq('partner_id', partnerId)
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    console.error('Error fetching partner transactions:', error.message);
+    throw error;
+  }
+  return (data || []).map(tx => {
+    const txObj = { ...tx };
+    txObj._id = txObj.id;
+    txObj.partnerId = txObj.partner_id;
+    txObj.jobId = txObj.job_id;
+    txObj.createdAt = txObj.created_at;
+    return txObj;
+  });
 };
 
-// Helper function to decrypt partner sensitive data before returning to code (never plain Aadhaar in DB)
+// Helper function to decrypt partner sensitive data before returning to code
 function decryptPartnerData(partner) {
   if (!partner) return null;
   
-  // Handle mongoose document mapping
-  const partnerObj = partner.toObject ? partner.toObject() : partner;
+  const partnerObj = { ...partner };
   
-  if (partnerObj.documents && partnerObj.documents.idProof) {
+  // Map PostgreSQL UUID id to _id for backend Mongoose compat
+  if (partnerObj.id) {
+    partnerObj._id = partnerObj.id;
+  }
+  
+  if (partnerObj.id_proof) {
     try {
-      partnerObj.documents.idProof = decryptText(partnerObj.documents.idProof);
+      partnerObj.documents = partnerObj.documents || {};
+      partnerObj.documents.idProof = decryptText(partnerObj.id_proof);
     } catch (e) {
       console.error('Failed to decrypt Aadhaar ID:', e.message);
     }
   }
-  if (partnerObj.bankDetails && partnerObj.bankDetails.accountNumber) {
+  if (partnerObj.bank_account_number) {
     try {
-      partnerObj.bankDetails.accountNumber = decryptText(partnerObj.bankDetails.accountNumber);
+      partnerObj.bankDetails = partnerObj.bankDetails || {};
+      partnerObj.bankDetails.accountNumber = decryptText(partnerObj.bank_account_number);
     } catch (e) {
       console.error('Failed to decrypt bank account number:', e.message);
     }
+  }
+
+  // Map other PostgreSQL snake_case fields to JS camelCase
+  if (partnerObj.service_category) partnerObj.serviceCategory = partnerObj.service_category;
+  if (partnerObj.profile_photo) partnerObj.profilePhoto = partnerObj.profile_photo;
+  if (partnerObj.service_area) partnerObj.serviceArea = partnerObj.service_area;
+  if (partnerObj.bank_ifsc) {
+    partnerObj.bankDetails = partnerObj.bankDetails || {};
+    partnerObj.bankDetails.ifsc = partnerObj.bank_ifsc;
+  }
+  if (partnerObj.skill_certificate) {
+    partnerObj.documents = partnerObj.documents || {};
+    partnerObj.documents.skillCertificate = partnerObj.skill_certificate;
+  }
+  if (partnerObj.jobs_completed !== undefined) partnerObj.jobsCompleted = partnerObj.jobs_completed;
+  if (partnerObj.wallet_balance !== undefined) partnerObj.walletBalance = partnerObj.wallet_balance;
+  if (partnerObj.is_online !== undefined) partnerObj.isOnline = partnerObj.is_online;
+  if (partnerObj.kyc_verified !== undefined) partnerObj.kycVerified = partnerObj.kyc_verified;
+  if (partnerObj.membership_tier) partnerObj.membershipTier = partnerObj.membership_tier;
+  if (partnerObj.location_lat !== undefined && partnerObj.location_lng !== undefined) {
+    partnerObj.location = {
+      type: 'Point',
+      coordinates: [Number(partnerObj.location_lng), Number(partnerObj.location_lat)]
+    };
   }
   
   return partnerObj;

@@ -15,10 +15,11 @@ export const LoginScreen = () => {
   const [loading, setLoading] = useState(false);
 
   const handleSendOtp = async () => {
-    if (phone.length >= 10) {
+    if (phone.length === 10) {
       try {
         setLoading(true);
-        await login(phone);
+        // Prepend +91 here to match live API requirements
+        await login(`+91${phone}`);
         setStep('otp');
       } catch (err: any) {
         Alert.alert('Error', err.message || 'Failed to send OTP. Please try again.');
@@ -26,7 +27,7 @@ export const LoginScreen = () => {
         setLoading(false);
       }
     } else {
-      Alert.alert('Invalid Phone', 'Please enter a valid phone number.');
+      Alert.alert('Invalid Phone', 'Please enter a valid 10-digit mobile number.');
     }
   };
 
@@ -34,9 +35,15 @@ export const LoginScreen = () => {
     if (otp.length === 6) {
       try {
         setLoading(true);
-        const success = await verifyOtp(phone, otp);
+        // Prepend +91 here too
+        const success = await verifyOtp(`+91${phone}`, otp);
         if (success) {
-          setStep('profile');
+          const currentUser = useAuthStore.getState().user;
+          if (currentUser && currentUser.name && currentUser.location) {
+            completeLogin();
+          } else {
+            setStep('profile');
+          }
         } else {
           Alert.alert('Invalid OTP', 'Invalid or expired OTP code. Please try again.');
         }
@@ -50,10 +57,17 @@ export const LoginScreen = () => {
     }
   };
 
-  const handleCompleteProfile = () => {
+  const handleCompleteProfile = async () => {
     if (name.trim() && location.trim()) {
-      updateProfile(name, location);
-      completeLogin();
+      try {
+        setLoading(true);
+        await updateProfile(name, location);
+        completeLogin();
+      } catch (err) {
+        Alert.alert('Error', 'Failed to save profile. Please try again.');
+      } finally {
+        setLoading(false);
+      }
     } else {
       Alert.alert('Profile Incomplete', 'Please fill in both your name and location.');
     }
@@ -62,7 +76,7 @@ export const LoginScreen = () => {
   return (
     <LinearGradient colors={[colors.primary, '#9B72CB', colors.background]} style={styles.container}>
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.inner}>
-        
+
         <View style={styles.header}>
           <Text style={styles.title}>Fixit</Text>
           <Text style={styles.subtitle}>Your Home Services, Sorted.</Text>
@@ -72,15 +86,19 @@ export const LoginScreen = () => {
           {step === 'phone' && (
             <View>
               <Text style={styles.label}>Enter Mobile Number</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="+91 9999999999"
-                keyboardType="phone-pad"
-                value={phone}
-                onChangeText={setPhone}
-                placeholderTextColor={colors.textSecondary}
-                editable={!loading}
-              />
+              <View style={styles.phoneInputContainer}>
+                <Text style={styles.phonePrefix}>+91</Text>
+                <TextInput
+                  style={styles.phoneTextInput}
+                  placeholder="9999999999"
+                  keyboardType="phone-pad"
+                  value={phone}
+                  onChangeText={(text) => setPhone(text.replace(/[^0-9]/g, '').slice(0, 10))}
+                  placeholderTextColor={colors.textSecondary}
+                  editable={!loading}
+                  maxLength={10}
+                />
+              </View>
               <TouchableOpacity style={styles.button} onPress={handleSendOtp} disabled={loading}>
                 {loading ? (
                   <ActivityIndicator color="#FFF" />
@@ -93,7 +111,7 @@ export const LoginScreen = () => {
 
           {step === 'otp' && (
             <View>
-              <Text style={styles.label}>Enter OTP sent to {phone}</Text>
+              <Text style={styles.label}>Enter OTP sent to +91 {phone}</Text>
               <TextInput
                 style={styles.input}
                 placeholder="000 000"
@@ -184,6 +202,30 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
     color: '#333',
+  },
+  phoneInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.8)',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    height: 56,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  phonePrefix: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#333',
+    marginRight: 6,
+  },
+  phoneTextInput: {
+    flex: 1,
+    fontSize: 16,
+    color: '#333',
+    height: '100%',
+    padding: 0,
   },
   button: {
     backgroundColor: colors.primary,

@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { HomeScreen } from '../screens/HomeScreen';
 import { BookingsScreen } from '../screens/BookingsScreen';
@@ -11,8 +12,12 @@ import { colors } from '../theme/colors';
 const Tab = createBottomTabNavigator();
 
 const CustomTabBar = ({ state, descriptors, navigation }: any) => {
+  const insets = useSafeAreaInsets();
+  const bottomPadding = insets.bottom > 0 ? insets.bottom : 12;
+  const tabBarHeight = 60 + bottomPadding;
+
   return (
-    <View style={styles.tabBarContainer}>
+    <View style={[styles.tabBarContainer, { height: tabBarHeight, paddingBottom: bottomPadding }]}>
       {state.routes.map((route: any, index: number) => {
         const { options } = descriptors[route.key];
         const label = options.tabBarLabel !== undefined
@@ -96,8 +101,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderTopWidth: 1,
     borderTopColor: '#F1F5F9',
-    height: Platform.OS === 'ios' ? 95 : 85,
-    paddingBottom: Platform.OS === 'ios' ? 24 : 12,
     paddingTop: 12,
     paddingHorizontal: 8,
     borderTopLeftRadius: 28,

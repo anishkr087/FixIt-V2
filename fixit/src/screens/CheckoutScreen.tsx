@@ -47,19 +47,23 @@ export const CheckoutScreen = ({ navigation }: any) => {
   useEffect(() => {
     if (!socket) return;
 
-    socket.on('booking_status_update', (data: any) => {
+    const handleBookingUpdate = (data: any) => {
       console.log('booking_status_update received:', data);
       setBooking(data);
-    });
+    };
 
-    socket.on('partner_location_update', (data: any) => {
+    const handlePartnerLocation = (data: any) => {
       console.log('partner_location_update received:', data);
       setPartnerLocation({ lat: data.lat, lng: data.lng });
-    });
+    };
+
+    socket.on('booking_status_update', handleBookingUpdate);
+    socket.on('partner_location_update', handlePartnerLocation);
 
     return () => {
-      socket.off('booking_status_update');
-      socket.off('partner_location_update');
+      // Remove ONLY this component's specific handlers, not all listeners
+      socket.off('booking_status_update', handleBookingUpdate);
+      socket.off('partner_location_update', handlePartnerLocation);
     };
   }, [socket]);
 

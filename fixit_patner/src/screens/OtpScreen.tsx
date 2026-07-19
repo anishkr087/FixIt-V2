@@ -38,8 +38,13 @@ export default function OtpScreen() {
           // If existing user with profile, AppNavigator will automatically 
           // switch to MainStack because AuthContext 'isAuthenticated' becomes true.
         }
-      } catch (e) {
-        alert('Invalid OTP. Please try again.');
+      } catch (e: any) {
+        if (e.response && e.response.status === 401) {
+          alert('Invalid OTP. Please try again.');
+        } else {
+          const errMsg = e.response?.data?.error || 'Server connection error. Please try again later.';
+          alert(errMsg);
+        }
       } finally {
         setLoading(false);
       }

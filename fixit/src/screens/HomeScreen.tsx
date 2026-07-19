@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Dimensions, Platform } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import React, { useState, useEffect } from 'react';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Dimensions, Platform, Modal, Alert } from 'react-native';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useNavigation } from '@react-navigation/native';
@@ -8,6 +8,8 @@ import { useAuthStore } from '../store/useAuthStore';
 import { colors } from '../theme/colors';
 import { useCartStore } from '../store/useCartStore';
 import { useBookingStore } from '../store/useBookingStore';
+import { useSocketStore } from '../store/useSocketStore';
+import { useNotificationStore } from '../store/useNotificationStore';
 
 const { width } = Dimensions.get('window');
 
@@ -102,21 +104,62 @@ export const HomeScreen = () => {
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [searchQuery, setSearchQuery] = useState('');
   const { items, getTotal } = useCartStore();
-  
+
   const cartTotal = getTotal();
   const cartCount = items.reduce((acc, item) => acc + item.quantity, 0);
+
+  const { notifications, markAsRead, markAllAsRead, clearAll, addNotification, getUnreadCount } = useNotificationStore();
+  const { socket, connect } = useSocketStore();
+  const [showNotifications, setShowNotifications] = useState(false);
+  const unreadCount = getUnreadCount();
+
+  const insets = useSafeAreaInsets();
+  const bottomPadding = insets.bottom > 0 ? insets.bottom : 12;
+  const tabBarHeight = 60 + bottomPadding;
+
+  // Socket connect and listen
+  useEffect(() => {
+    if (user) {
+      connect();
+    }
+  }, [user]);
+
+  useEffect(() => {
+    if (!socket) return;
+
+    const handleUpdate = (data: any) => {
+      console.log('booking_status_update in HomeScreen:', data);
+      addNotification({
+        title: 'Booking Update 🛠️',
+        body: `Your job request status has been updated to: ${data.status.replace('_', ' ').toUpperCase()}`,
+        type: 'booking'
+      });
+    };
+
+    socket.on('booking_status_update', handleUpdate);
+
+    return () => {
+      socket.off('booking_status_update', handleUpdate);
+    };
+  }, [socket]);
+
+  const getGreeting = () => {
+    const hrs = new Date().getHours();
+    if (hrs < 12) return 'GOOD MORNING 👋';
+    if (hrs < 17) return 'GOOD AFTERNOON 👋';
+    if (hrs < 22) return 'GOOD EVENING 👋';
+    return 'GOOD NIGHT 👋';
+  };
 
   const filteredServices = SERVICES_DATA.filter((service) => {
     const matchesCategory =
       selectedCategory === 'All' ||
-      service.categoryName.toLowerCase() === selectedCategory.toLowerCase() ||
-      (selectedCategory === 'Electrical' && service.categoryName === 'Electrical') ||
-      (selectedCategory === 'Carpenter' && service.categoryName === 'Carpenter');
-      
+      service.categoryName.toLowerCase() === selectedCategory.toLowerCase();
+
     const matchesSearch =
       service.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
       service.desc.toLowerCase().includes(searchQuery.toLowerCase());
-      
+
     return matchesCategory && matchesSearch;
   });
 
@@ -126,11 +169,11 @@ export const HomeScreen = () => {
 
   return (
     <View style={styles.container}>
-      <ScrollView 
+      <ScrollView
         contentContainerStyle={[
-          styles.scrollContent, 
-          { paddingBottom: cartCount > 0 ? 160 : 100 }
-        ]} 
+          styles.scrollContent,
+          { paddingBottom: cartCount > 0 ? tabBarHeight + 90 : tabBarHeight + 30 }
+        ]}
         showsVerticalScrollIndicator={false}
       >
         <LinearGradient
@@ -142,16 +185,28 @@ export const HomeScreen = () => {
           <SafeAreaView edges={['top']} style={styles.headerSafeArea}>
             <View style={styles.headerTop}>
               <View>
-                <Text style={styles.greeting}>GOOD MORNING 👋</Text>
+                <Text style={styles.greeting}>{getGreeting()}</Text>
                 <Text style={styles.headerTitleText}>Find Home Experts</Text>
-                <View style={styles.locationContainer}>
+                <TouchableOpacity 
+                  style={styles.locationContainer}
+                  activeOpacity={0.7}
+                  onPress={() => Alert.alert("Location", `Current: ${user?.location || 'Bandra West, Mumbai'}\n\nAddress management is coming soon!`)}
+                >
                   <Ionicons name="location-sharp" size={14} color="#FFF" />
                   <Text style={styles.locationText}>{user?.location || 'Bandra West, Mumbai'}</Text>
-                </View>
+                </TouchableOpacity>
               </View>
-              <TouchableOpacity style={styles.notificationBtn} activeOpacity={0.8}>
+              <TouchableOpacity 
+                style={styles.notificationBtn} 
+                activeOpacity={0.8}
+                onPress={() => setShowNotifications(true)}
+              >
                 <Ionicons name="notifications-outline" size={24} color="#FFF" />
-                <View style={styles.notificationBadge} />
+                {unreadCount > 0 && (
+                  <View style={styles.notificationBadge}>
+                    <Text style={styles.notificationBadgeText}>{unreadCount}</Text>
+                  </View>
+                )}
               </TouchableOpacity>
             </View>
 
@@ -186,8 +241,8 @@ export const HomeScreen = () => {
                   </Text>
                 </View>
               </View>
-              <TouchableOpacity 
-                style={styles.trackBtn} 
+              <TouchableOpacity
+                style={styles.trackBtn}
                 activeOpacity={0.8}
                 onPress={() => navigation.navigate('Bookings')}
               >
@@ -237,7 +292,7 @@ export const HomeScreen = () => {
                 </View>
                 <Text style={styles.serviceTitle}>{service.title}</Text>
                 <Text style={styles.serviceDesc} numberOfLines={2}>{service.desc}</Text>
-                
+
                 <View style={styles.serviceFooter}>
                   <Text style={styles.servicePrice}>₹{service.price}</Text>
                   <View style={styles.ratingRow}>
@@ -269,12 +324,12 @@ export const HomeScreen = () => {
                 </View>
                 <Text style={styles.proName}>{pro.name}</Text>
                 <Text style={styles.proRole}>{pro.role}</Text>
-                
+
                 <View style={styles.proRatingRow}>
                   <Ionicons name="star" size={14} color="#F59E0B" />
                   <Text style={styles.proRatingText}>{pro.rating} · {pro.jobs} jobs</Text>
                 </View>
-                
+
                 <View style={styles.verifiedBadge}>
                   <Ionicons name="shield-checkmark" size={12} color="#10B981" />
                   <Text style={styles.verifiedText}>Verified Pro</Text>
@@ -313,7 +368,11 @@ export const HomeScreen = () => {
               <Text style={styles.bannerTitleText}>Home Sparkle Sale</Text>
               <Text style={styles.bannerDescText}>Get deep cleaning starting at just ₹179!</Text>
             </View>
-            <TouchableOpacity style={styles.bannerBookBtn} activeOpacity={0.8}>
+            <TouchableOpacity 
+              style={styles.bannerBookBtn} 
+              activeOpacity={0.8}
+              onPress={() => Alert.alert("Special Offer", "Sparkle Sale booking is coming soon!")}
+            >
               <Text style={styles.bannerBookText}>Book Now</Text>
             </TouchableOpacity>
           </View>
@@ -321,12 +380,12 @@ export const HomeScreen = () => {
       </ScrollView>
 
       {cartCount > 0 && (
-        <View style={styles.checkoutBar}>
+        <View style={[styles.checkoutBar, { bottom: tabBarHeight + 10 }]}>
           <View>
             <Text style={styles.checkoutItems}>{cartCount} items | ₹{cartTotal}</Text>
             <Text style={styles.checkoutSub}>Extra charges may apply</Text>
           </View>
-          <TouchableOpacity 
+          <TouchableOpacity
             style={styles.checkoutBtn}
             onPress={() => navigation.navigate('Checkout')}
             activeOpacity={0.8}
@@ -336,6 +395,60 @@ export const HomeScreen = () => {
           </TouchableOpacity>
         </View>
       )}
+
+      {/* Notifications Modal */}
+      <Modal
+        visible={showNotifications}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setShowNotifications(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Notifications</Text>
+              <TouchableOpacity onPress={() => setShowNotifications(false)}>
+                <Ionicons name="close" size={24} color={colors.textPrimary} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.modalActions}>
+              <TouchableOpacity onPress={markAllAsRead} style={styles.actionBtn}>
+                <Text style={styles.actionBtnText}>Mark all as read</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={clearAll} style={styles.actionBtn}>
+                <Text style={[styles.actionBtnText, { color: colors.danger }]}>Clear all</Text>
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView contentContainerStyle={styles.notificationsList}>
+              {notifications.length === 0 ? (
+                <View style={styles.emptyNotifications}>
+                  <Ionicons name="notifications-off-outline" size={48} color={colors.textSecondary} />
+                  <Text style={styles.emptyText}>No notifications yet</Text>
+                </View>
+              ) : (
+                notifications.map((notif) => (
+                  <View key={notif.id} style={[styles.notificationItem, !notif.read && styles.unreadItem]}>
+                    <View style={styles.notificationInfo}>
+                      <Text style={styles.notificationTitle}>{notif.title}</Text>
+                      <Text style={styles.notificationBody}>{notif.body}</Text>
+                      <Text style={styles.notificationTime}>
+                        {new Date(notif.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </Text>
+                    </View>
+                    {!notif.read && (
+                      <TouchableOpacity onPress={() => markAsRead(notif.id)} style={styles.markReadCircle}>
+                        <View style={styles.unreadDot} />
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                ))
+              )}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 };
@@ -397,14 +510,21 @@ const styles = StyleSheet.create({
   },
   notificationBadge: {
     position: 'absolute',
-    top: 10,
-    right: 12,
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: '#FF5E14',
-    borderWidth: 1.5,
-    borderColor: '#FFF',
+    top: 4,
+    right: 4,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: '#FF3B30',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 3,
+  },
+  notificationBadgeText: {
+    color: '#FFF',
+    fontSize: 9,
+    fontWeight: '900',
+    textAlign: 'center',
   },
   searchBarContainer: {
     flexDirection: 'row',
@@ -766,7 +886,6 @@ const styles = StyleSheet.create({
   },
   checkoutBar: {
     position: 'absolute',
-    bottom: Platform.OS === 'ios' ? 105 : 95,
     left: 16,
     right: 16,
     backgroundColor: colors.primary,
@@ -803,5 +922,107 @@ const styles = StyleSheet.create({
     color: '#FFF',
     fontWeight: '800',
     fontSize: 13,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: '#FFF',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    height: '75%',
+    padding: 24,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: colors.textPrimary,
+  },
+  modalActions: {
+    flexDirection: 'row',
+    gap: 16,
+    marginBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+    paddingBottom: 12,
+  },
+  actionBtn: {
+    paddingVertical: 6,
+  },
+  actionBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.primary,
+  },
+  notificationsList: {
+    paddingVertical: 8,
+  },
+  emptyNotifications: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 60,
+    gap: 12,
+  },
+  emptyText: {
+    fontSize: 14,
+    color: colors.textSecondary,
+    fontWeight: '600',
+  },
+  notificationItem: {
+    padding: 16,
+    borderRadius: 16,
+    backgroundColor: '#F8FAFC',
+    marginBottom: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderWidth: 1,
+    borderColor: '#F1F5F9',
+  },
+  unreadItem: {
+    backgroundColor: '#FFF8F5',
+    borderColor: '#FFEBE0',
+  },
+  notificationInfo: {
+    flex: 1,
+    marginRight: 12,
+  },
+  notificationTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: colors.textPrimary,
+    marginBottom: 4,
+  },
+  notificationBody: {
+    fontSize: 13,
+    color: colors.textSecondary,
+    lineHeight: 18,
+    marginBottom: 6,
+  },
+  notificationTime: {
+    fontSize: 11,
+    color: 'rgba(0,0,0,0.4)',
+    fontWeight: '600',
+  },
+  markReadCircle: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  unreadDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: colors.primary,
   },
 });

@@ -18,10 +18,10 @@ export const LoginModal = () => {
   const [loading, setLoading] = useState(false);
 
   const handleSendOtp = async () => {
-    if (phone.length >= 10) {
+    if (phone.length === 10) {
       try {
         setLoading(true);
-        await login(phone);
+        await login(`+91${phone}`);
         setStep('otp');
       } catch (err: any) {
         Alert.alert('Error', err.message || 'Failed to send OTP. Please try again.');
@@ -29,7 +29,7 @@ export const LoginModal = () => {
         setLoading(false);
       }
     } else {
-      Alert.alert('Invalid Phone', 'Please enter a valid phone number.');
+      Alert.alert('Invalid Phone', 'Please enter a valid 10-digit mobile number.');
     }
   };
 
@@ -37,9 +37,14 @@ export const LoginModal = () => {
     if (otp.length === 6) {
       try {
         setLoading(true);
-        const success = await verifyOtp(phone, otp);
+        const success = await verifyOtp(`+91${phone}`, otp);
         if (success) {
-          setStep('profile');
+          const currentUser = useAuthStore.getState().user;
+          if (currentUser && currentUser.name && currentUser.location) {
+            completeLogin();
+          } else {
+            setStep('profile');
+          }
         } else {
           Alert.alert('Invalid OTP', 'Invalid or expired OTP code. Please try again.');
         }
@@ -75,10 +80,17 @@ export const LoginModal = () => {
     }
   };
 
-  const handleCompleteProfile = () => {
+  const handleCompleteProfile = async () => {
     if (name.trim() && location.trim()) {
-      updateProfile(name, location, email);
-      completeLogin();
+      try {
+        setLoading(true);
+        await updateProfile(name, location, email);
+        completeLogin();
+      } catch (err) {
+        Alert.alert('Error', 'Failed to save profile. Please try again.');
+      } finally {
+        setLoading(false);
+      }
     } else {
       Alert.alert('Profile Incomplete', 'Please fill in both your name and location.');
     }
@@ -99,7 +111,7 @@ export const LoginModal = () => {
       <View style={[styles.modalOverlay, step === 'profile' && { justifyContent: 'flex-start' }]}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={[styles.keyboardView, step === 'profile' && { flex: 1 }]}>
           <LinearGradient colors={[colors.primary, '#9B72CB']} style={[styles.modalContent, step === 'profile' && styles.modalContentFull]}>
-            
+
             <TouchableOpacity style={styles.closeBtn} onPress={handleClose}>
               <Ionicons name="close" size={28} color="#FFF" />
             </TouchableOpacity>
@@ -113,19 +125,31 @@ export const LoginModal = () => {
               {(step === 'phone' || step === 'otp') && (
                 <View>
                   <Text style={styles.label}>Enter Mobile Number</Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="+91 9999999999"
-                    keyboardType="phone-pad"
-                    value={phone}
-                    onChangeText={setPhone}
-                    placeholderTextColor={colors.textSecondary}
-                    editable={step === 'phone' && !loading}
-                  />
+                  {step === 'phone' ? (
+                    <View style={styles.phoneInputContainer}>
+                      <Text style={styles.phonePrefix}>+91</Text>
+                      <TextInput
+                        style={styles.phoneTextInput}
+                        placeholder="9999999999"
+                        keyboardType="phone-pad"
+                        value={phone}
+                        onChangeText={(text) => setPhone(text.replace(/[^0-9]/g, '').slice(0, 10))}
+                        placeholderTextColor={colors.textSecondary}
+                        editable={!loading}
+                        maxLength={10}
+                      />
+                    </View>
+                  ) : (
+                    <TextInput
+                      style={styles.input}
+                      value={`+91 ${phone}`}
+                      editable={false}
+                    />
+                  )}
 
                   {step === 'otp' && (
                     <View>
-                      <Text style={[styles.label, { marginTop: 4 }]}>Enter OTP sent to {phone}</Text>
+                      <Text style={[styles.label, { marginTop: 4 }]}>Enter OTP sent to +91 {phone}</Text>
                       <TextInput
                         style={styles.input}
                         placeholder="000 000"
@@ -253,7 +277,7 @@ const styles = StyleSheet.create({
   },
   card: {
     padding: 20,
-    backgroundColor: 'rgba(255, 255, 255, 0.25)', 
+    backgroundColor: 'rgba(255, 255, 255, 0.25)',
   },
   label: {
     fontSize: 16,
@@ -295,5 +319,27 @@ const styles = StyleSheet.create({
     color: '#FFF',
     fontSize: 16,
     fontWeight: 'bold',
+  },
+  phoneInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.9)',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    height: 56,
+    marginBottom: 16,
+  },
+  phonePrefix: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: colors.textPrimary,
+    marginRight: 6,
+  },
+  phoneTextInput: {
+    flex: 1,
+    fontSize: 16,
+    color: colors.textPrimary,
+    height: '100%',
+    padding: 0,
   },
 });

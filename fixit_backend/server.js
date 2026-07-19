@@ -1,10 +1,10 @@
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
-const mongoose = require('mongoose');
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
 const dbHelper = require('./db_helper');
+const supabase = require('./src/config/supabase');
 require('dotenv').config();
 
 const app = express();
@@ -27,52 +27,45 @@ app.use(cors({
   origin: allowedOrigins
 }));
 app.use(express.json());
-
 let lastDbError = null;
-mongoose.connection.on('error', err => {
-  console.error('Mongoose connection error:', err);
-  lastDbError = err.message || err.toString();
-});
-
-// MongoDB Connection
-mongoose.connect(process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/fixit_partner')
-  .then(() => console.log('MongoDB Connected'))
-  .catch(err => {
-    console.error('MongoDB Connection Error:', err);
-    lastDbError = err.message || err.toString();
-  });
 
 // Routes
 const authRoutes = require('./routes/auth');
 const partnerRoutes = require('./routes/partner');
+const customerRoutes = require('./src/modules/customer/CustomerRoutes');
 
 app.use('/api/auth', authRoutes);
 app.use('/api/partner', partnerRoutes);
+app.use('/api/customer', customerRoutes);
 
 app.get('/', (req, res) => res.send('FixIt Secure Backend Running.'));
 
-app.get('/api/db-status', (req, res) => {
-  const state = mongoose.connection.readyState;
-  const states = {
-    0: 'disconnected',
-    1: 'connected',
-    2: 'connecting',
-    3: 'disconnecting',
-    99: 'uninitialized'
-  };
+app.get('/api/db-status', async (req, res) => {
+  const readyState = !!supabase.supabaseUrl && !!supabase.supabaseKey ? 1 : 0;
+  const status = readyState === 1 ? 'connected' : 'disconnected';
   
-  const uri = process.env.MONGODB_URI || '';
-  const match = uri.match(/\/\/([^:]+):/);
-  const username = match ? match[1] : 'unknown';
+  let host = 'supabase';
+  let name = '';
+  let error = null;
+
+  if (readyState === 1) {
+    try {
+      const { data, error: connError } = await supabase.from('customers').select('phone').limit(1);
+      if (connError) {
+        error = connError.message;
+      }
+    } catch (err) {
+      error = err.message || err.toString();
+    }
+  }
 
   res.json({
-    readyState: state,
-    status: states[state] || 'unknown',
-    host: mongoose.connection.host,
-    name: mongoose.connection.name,
-    username: username,
-    uri: process.env.MONGODB_URI ? process.env.MONGODB_URI.replace(/\/\/.*@/, '//****@') : 'using default localhost',
-    error: lastDbError
+    readyState,
+    status: error ? 'disconnected' : status,
+    host,
+    name,
+    uri: supabase.supabaseUrl,
+    error
   });
 });
 
@@ -203,27 +196,30 @@ io.on('connection', (socket) => {
     activeJobs[newJob.jobId] = newJob;
     customerSockets[customerId] = socket.id;
 
-    // Save to Mongoose strictly
+    // Save to Supabase strictly
     try {
-      const JobRequest = require('./models/JobRequest');
-      const dbJob = new JobRequest({
-        customerId,
-        problemDescription,
-        estimatedPrice,
-        paymentMethod,
-        status: 'pending',
-        customerLocation: {
-          type: 'Point',
-          coordinates: [lng, lat]
-        }
-      });
-      const savedJob = await dbJob.save();
+      const { data: savedJob, error: dbError } = await supabase
+        .from('job_requests')
+        .insert({
+          customer_id: customerId,
+          problem_description: problemDescription,
+          estimated_price: estimatedPrice,
+          payment_method: paymentMethod,
+          status: 'pending',
+          customer_location_lat: lat,
+          customer_location_lng: lng
+        })
+        .select('*')
+        .single();
+
+      if (dbError) throw dbError;
       
-      // Re-key in-memory registry with real MongoDB ID
-      newJob.jobId = savedJob._id.toString();
-      activeJobs[savedJob._id.toString()] = newJob;
-      delete activeJobs[newJob.jobId];
-      console.log(`JobRequest persisted in MongoDB with ID: ${savedJob._id}`);
+      // Re-key in-memory registry with real UUID ID
+      const tempJobId = newJob.jobId; // preserve temp key before overwriting
+      newJob.jobId = savedJob.id;
+      activeJobs[savedJob.id] = newJob;
+      delete activeJobs[tempJobId]; // delete the old temp key, not the new one
+      console.log(`JobRequest persisted in Supabase with ID: ${savedJob.id}`);
     } catch (err) {
       console.error('Failed to persist JobRequest to MongoDB:', err);
       socket.emit('booking_status_update', {
@@ -306,13 +302,16 @@ io.on('connection', (socket) => {
       job.assignedPartner = partnerId;
 
       try {
-        const JobRequest = require('./models/JobRequest');
-        await JobRequest.findByIdAndUpdate(jobId, { 
-          status: 'accepted',
-          assignedPartner: partnerId
-        });
+        const { error: updateError } = await supabase
+          .from('job_requests')
+          .update({ 
+            status: 'accepted',
+            assigned_partner: partnerId
+          })
+          .eq('id', jobId);
+        if (updateError) throw updateError;
       } catch (err) {
-        console.error('MongoDB accept_job error:', err);
+        console.error('Supabase accept_job error:', err.message);
         return;
       }
 
@@ -325,8 +324,12 @@ io.on('connection', (socket) => {
       };
 
       try {
-        const Partner = require('./models/Partner');
-        const pDb = await Partner.findById(partnerId);
+        const { data: pDb, error: pError } = await supabase
+          .from('partners')
+          .select('*')
+          .eq('id', partnerId)
+          .maybeSingle();
+        if (pError) throw pError;
         if (pDb) {
           partnerDetails = {
             name: pDb.name,
@@ -384,10 +387,15 @@ io.on('connection', (socket) => {
   socket.on('update_job_status', async (data) => {
     const { jobId, status, partnerId } = data;
     
-    // Authorization Check
-    if (socket.userType !== 'partner' || socket.userId !== partnerId) {
-      console.error(`[Security Violation] Socket ${socket.id} attempted 'update_job_status' for partnerId ${partnerId} but is authenticated as ${socket.userId}.`);
-      return;
+    // Allow customers to cancel their own pending/broadcasted jobs
+    const isCustomerCancelling = socket.userType === 'customer' && status === 'cancelled';
+
+    if (!isCustomerCancelling) {
+      // Authorization Check: only partners can advance job status
+      if (socket.userType !== 'partner' || socket.userId !== partnerId) {
+        console.error(`[Security Violation] Socket ${socket.id} attempted 'update_job_status' for partnerId ${partnerId} but is authenticated as ${socket.userId}.`);
+        return;
+      }
     }
 
     console.log(`[Job ${jobId}] Status advanced to: ${status}`);
@@ -395,19 +403,35 @@ io.on('connection', (socket) => {
     if (activeJobs[jobId]) {
       const job = activeJobs[jobId];
       
-      // Ownership check: partner must be the one assigned
-      if (job.assignedPartner !== partnerId) {
-        console.error(`[Security Violation] Partner ${partnerId} attempted status update on unassigned job ${jobId}. Assigned: ${job.assignedPartner}`);
-        return;
+      if (isCustomerCancelling) {
+        // Validate this customer owns the job
+        if (job.customerId !== socket.userId) {
+          console.error(`[Security Violation] Customer ${socket.userId} attempted to cancel job ${jobId} owned by ${job.customerId}.`);
+          return;
+        }
+        // Only allow cancellation if no partner assigned yet
+        if (job.assignedPartner && job.status === 'accepted') {
+          socket.emit('error_notification', 'Cannot cancel after a professional has accepted. Please contact support.');
+          return;
+        }
+      } else {
+        // Ownership check: partner must be the one assigned
+        if (job.assignedPartner !== partnerId) {
+          console.error(`[Security Violation] Partner ${partnerId} attempted status update on unassigned job ${jobId}. Assigned: ${job.assignedPartner}`);
+          return;
+        }
       }
 
       job.status = status;
 
       try {
-        const JobRequest = require('./models/JobRequest');
-        await JobRequest.findByIdAndUpdate(jobId, { status });
+        const { error: updateError } = await supabase
+          .from('job_requests')
+          .update({ status })
+          .eq('id', jobId);
+        if (updateError) throw updateError;
       } catch (err) {
-        console.error('MongoDB update_job_status error:', err);
+        console.error('Supabase update_job_status error:', err.message);
       }
 
       const customerSocketId = customerSockets[job.customerId];
@@ -415,8 +439,13 @@ io.on('connection', (socket) => {
         io.to(customerSocketId).emit('booking_status_update', {
           jobId,
           status,
-          message: `Professional status: ${status}`
+          message: isCustomerCancelling ? 'Your booking has been cancelled.' : `Professional status: ${status}`
         });
+      }
+
+      // Clean up in-memory job if cancelled
+      if (status === 'cancelled') {
+        delete activeJobs[jobId];
       }
     }
   });
@@ -444,13 +473,16 @@ io.on('connection', (socket) => {
       job.status = 'completed';
 
       try {
-        const JobRequest = require('./models/JobRequest');
-        await JobRequest.findByIdAndUpdate(jobId, { 
-          status: 'completed',
-          completedAt: new Date()
-        });
+        const { error: updateError } = await supabase
+          .from('job_requests')
+          .update({ 
+            status: 'completed',
+            completed_at: new Date()
+          })
+          .eq('id', jobId);
+        if (updateError) throw updateError;
       } catch (err) {
-        console.error('MongoDB complete_job status update error:', err);
+        console.error('Supabase complete_job status update error:', err.message);
         return;
       }
 
@@ -531,6 +563,9 @@ io.on('connection', (socket) => {
     }
   });
 });
+
+const errorHandler = require('./src/middlewares/error');
+app.use(errorHandler);
 
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {

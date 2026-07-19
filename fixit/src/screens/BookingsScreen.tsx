@@ -1,22 +1,55 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, ActivityIndicator, Platform } from 'react-native';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import MapView, { Marker, Polyline } from 'react-native-maps';
 import * as Location from 'expo-location';
 import { colors } from '../theme/colors';
 import { useBookingStore } from '../store/useBookingStore';
 import { useSocketStore } from '../store/useSocketStore';
+import { useAuthStore } from '../store/useAuthStore';
+import { apiClient } from '../api/apiClient';
 
-const MOCK_BOOKINGS = [
-  { id: '1', service: 'Deep Home Cleaning', date: 'Oct 24, 2026', status: 'Completed', price: 2999 },
-  { id: '2', service: 'Fan Repair', date: 'Oct 10, 2026', status: 'Completed', price: 149 },
-];
+// Lazy-load MapView — prevents crash at app startup if native module not ready
+let MapView: any = null;
+let Marker: any = null;
+let Polyline: any = null;
+try {
+  const Maps = require('react-native-maps');
+  MapView = Maps.default;
+  Marker = Maps.Marker;
+  Polyline = Maps.Polyline;
+} catch (e) {
+  console.warn('react-native-maps not available:', e);
+}
+
 
 export const BookingsScreen = () => {
+  const insets = useSafeAreaInsets();
+  const bottomPadding = insets.bottom > 0 ? insets.bottom : 12;
+  const tabBarHeight = 60 + bottomPadding;
+
   const { activeBooking, partnerLocation, clearBooking } = useBookingStore();
   const { socket, connect } = useSocketStore();
   const [currentLocation, setCurrentLocation] = useState<Location.LocationObject | null>(null);
+
+  const { user } = useAuthStore();
+  const [pastBookings, setPastBookings] = useState<any[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+
+  const fetchBookingHistory = async () => {
+    if (!user || !user.phone) return;
+    try {
+      setLoadingHistory(true);
+      const response = await apiClient.get(`/customer/bookings/${user.phone}`);
+      if (response.data && response.data.success && response.data.bookings) {
+        setPastBookings(response.data.bookings);
+      }
+    } catch (err) {
+      console.error('Error fetching bookings inside BookingsScreen:', err);
+    } finally {
+      setLoadingHistory(false);
+    }
+  };
 
   useEffect(() => {
     connect();
@@ -33,6 +66,17 @@ export const BookingsScreen = () => {
       }
     })();
   }, []);
+
+  useEffect(() => {
+    fetchBookingHistory();
+  }, [user]);
+
+  // Refresh past bookings when a job is completed
+  useEffect(() => {
+    if (activeBooking?.status === 'completed') {
+      fetchBookingHistory();
+    }
+  }, [activeBooking?.status]);
 
   const getStatusStep = () => {
     if (!activeBooking) return 0;
@@ -51,14 +95,19 @@ export const BookingsScreen = () => {
       "Are you sure you want to cancel this request?",
       [
         { text: "No", style: "cancel" },
-        { 
-          text: "Yes, Cancel", 
+        {
+          text: "Yes, Cancel",
           style: "destructive",
           onPress: () => {
-            socket?.emit('update_job_status', { 
-              jobId: activeBooking?.jobId, 
-              status: 'cancelled' 
-            });
+            // Emit update_job_status with partnerId if available; server validates authorization
+            // For pending/broadcasted jobs (no partner yet), server should allow customer-initiated cancel
+            if (activeBooking?.jobId) {
+              socket?.emit('update_job_status', {
+                jobId: activeBooking.jobId,
+                status: 'cancelled',
+                partnerId: activeBooking.partner ? undefined : null // will fail auth if partner already assigned
+              });
+            }
             clearBooking();
           }
         }
@@ -83,11 +132,11 @@ export const BookingsScreen = () => {
           <Text style={styles.liveTitle}>Live Booking Status</Text>
           <Ionicons name="pulse" size={20} color={colors.primary} />
         </View>
-        
+
         <Text style={styles.liveMessage}>{activeBooking?.message || 'Processing Request...'}</Text>
-        
+
         {/* Live Tracking Map */}
-        {partner && (currentLocation || pLocation) && (
+        {partner && (currentLocation || pLocation) && MapView && (
           <View style={styles.mapContainer}>
             <MapView
               style={styles.liveMap}
@@ -206,7 +255,7 @@ export const BookingsScreen = () => {
               <Text style={styles.partnerName}>{partner.name}</Text>
               <Text style={styles.partnerSub}>{partner.experience} yrs exp • ★ {partner.rating}</Text>
             </View>
-            <TouchableOpacity 
+            <TouchableOpacity
               style={styles.callButton}
               onPress={() => Alert.alert('Calling Partner', `Connecting call to: +91 ${partner.phone}`)}
             >
@@ -217,7 +266,7 @@ export const BookingsScreen = () => {
 
         {/* Action Button Panel */}
         {status !== 'completed' && status !== 'no_partners' && (
-          <TouchableOpacity 
+          <TouchableOpacity
             style={styles.cancelBtn}
             onPress={handleCancelBooking}
           >
@@ -226,7 +275,7 @@ export const BookingsScreen = () => {
         )}
 
         {status === 'completed' && (
-          <TouchableOpacity 
+          <TouchableOpacity
             style={styles.completeBtn}
             onPress={clearBooking}
           >
@@ -235,7 +284,7 @@ export const BookingsScreen = () => {
         )}
 
         {status === 'no_partners' && (
-          <TouchableOpacity 
+          <TouchableOpacity
             style={styles.completeBtn}
             onPress={clearBooking}
           >
@@ -248,36 +297,70 @@ export const BookingsScreen = () => {
 
   return (
     <SafeAreaView style={styles.container}>
-      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+      <ScrollView contentContainerStyle={[styles.scrollContent, { paddingBottom: tabBarHeight + 20 }]} showsVerticalScrollIndicator={false}>
         <Text style={styles.headerTitle}>My Bookings</Text>
-        
+
         {activeBooking && renderLiveStatus()}
 
         <Text style={[styles.sectionTitle, activeBooking && { marginTop: 12 }]}>Past Bookings</Text>
-        
+
         <View style={styles.pastBookingsList}>
-          {MOCK_BOOKINGS.map((item) => (
-            <View key={item.id} style={styles.card}>
-              <View style={styles.cardHeader}>
-                <View>
-                  <Text style={styles.serviceTitle}>{item.service}</Text>
-                  <Text style={styles.date}>{item.date}</Text>
-                </View>
-                <Text style={styles.price}>₹ {item.price}</Text>
-              </View>
-              <View style={styles.divider} />
-              <View style={styles.statusRow}>
-                <Ionicons 
-                  name={item.status === 'Completed' ? 'checkmark-circle' : 'time'} 
-                  size={20} 
-                  color={item.status === 'Completed' ? colors.success : colors.warning} 
-                />
-                <Text style={[styles.statusText, { color: item.status === 'Completed' ? colors.success : colors.warning }]}>
-                  {item.status}
-                </Text>
-              </View>
+          {loadingHistory && pastBookings.length === 0 ? (
+            <ActivityIndicator size="small" color={colors.primary} style={{ marginVertical: 20 }} />
+          ) : pastBookings.length === 0 ? (
+            <View style={styles.emptyBookingsCard}>
+              <Ionicons name="calendar-outline" size={32} color={colors.textSecondary} />
+              <Text style={styles.emptyBookingsText}>No bookings placed yet.</Text>
             </View>
-          ))}
+          ) : (
+            pastBookings.map((item) => {
+              const formattedDate = new Date(item.createdAt).toLocaleDateString('en-IN', {
+                day: 'numeric',
+                month: 'short',
+                year: 'numeric'
+              });
+              
+              const isCompleted = item.status === 'completed';
+              const isCancelled = item.status === 'cancelled';
+              
+              const statusIcon = isCompleted 
+                ? 'checkmark-circle' 
+                : isCancelled 
+                  ? 'close-circle' 
+                  : 'time';
+              
+              const statusColor = isCompleted 
+                ? colors.success 
+                : isCancelled 
+                  ? colors.danger 
+                  : colors.warning;
+
+              return (
+                <View key={item._id} style={styles.card}>
+                  <View style={styles.cardHeader}>
+                    <View style={{ flex: 1, marginRight: 8 }}>
+                      <Text style={styles.serviceTitle} numberOfLines={1}>
+                        {item.problemDescription || 'Home Service'}
+                      </Text>
+                      <Text style={styles.date}>{formattedDate}</Text>
+                    </View>
+                    <Text style={styles.price}>₹{item.estimatedPrice}</Text>
+                  </View>
+                  <View style={styles.divider} />
+                  <View style={styles.statusRow}>
+                    <Ionicons 
+                      name={statusIcon as any} 
+                      size={20} 
+                      color={statusColor} 
+                    />
+                    <Text style={[styles.statusText, { color: statusColor }]}>
+                      {item.status.toUpperCase().replace('_', ' ')}
+                    </Text>
+                  </View>
+                </View>
+              );
+            })
+          )}
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -286,11 +369,11 @@ export const BookingsScreen = () => {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
-  scrollContent: { paddingBottom: 40 },
+  scrollContent: { },
   headerTitle: { fontSize: 24, fontWeight: 'bold', padding: 16, color: colors.textPrimary },
   sectionTitle: { fontSize: 18, fontWeight: 'bold', paddingHorizontal: 16, marginBottom: 12, color: colors.textPrimary },
   pastBookingsList: { paddingHorizontal: 16 },
-  card: { backgroundColor: '#FFF', borderRadius: 12, padding: 16, marginBottom: 16, elevation: 2, shadowColor: '#000', shadowOffset: { width:0, height:2 }, shadowOpacity: 0.1, shadowRadius: 4 },
+  card: { backgroundColor: '#FFF', borderRadius: 12, padding: 16, marginBottom: 16, elevation: 2, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4 },
   cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
   serviceTitle: { fontSize: 16, fontWeight: 'bold', color: colors.textPrimary, marginBottom: 4 },
   date: { fontSize: 13, color: colors.textSecondary },
@@ -298,7 +381,7 @@ const styles = StyleSheet.create({
   divider: { height: 1, backgroundColor: colors.border, marginVertical: 12 },
   statusRow: { flexDirection: 'row', alignItems: 'center' },
   statusText: { marginLeft: 8, fontWeight: 'bold' },
-  
+
   liveCard: {
     backgroundColor: '#FFF',
     borderRadius: 20,
@@ -489,5 +572,21 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.2,
     shadowRadius: 3,
     elevation: 4,
+  },
+  emptyBookingsCard: {
+    backgroundColor: '#FFF',
+    borderRadius: 16,
+    padding: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginBottom: 16,
+    gap: 8,
+  },
+  emptyBookingsText: {
+    fontSize: 14,
+    color: colors.textSecondary,
+    fontWeight: '600',
   },
 });
