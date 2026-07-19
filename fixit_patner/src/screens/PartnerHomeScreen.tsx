@@ -75,8 +75,8 @@ export default function PartnerHomeScreen({ navigation }: any) {
   }, [navigation]);
   
   // Membership settings (Commented out for future update)
-  // const [selectedTier, setSelectedTier] = useState<'basic' | 'silver' | 'gold'>(partnerInfo?.membershipTier || 'basic');
-  const selectedTier = 'basic';
+  // Membership settings
+  const [selectedTier, setSelectedTier] = useState<'basic' | 'silver' | 'gold'>(partnerInfo?.membershipTier || 'basic');
 
   const socketRef = useRef<Socket | null>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
@@ -100,13 +100,12 @@ export default function PartnerHomeScreen({ navigation }: any) {
   }, [jobStatus]);
 
   const getTierConfig = () => {
-    /* FUTURE UPDATE:
     switch (selectedTier) {
       case 'silver':
         return {
-          radius: 5000,
-          strokeColor: 'rgba(245, 158, 11, 0.5)',
-          fillColor: 'rgba(245, 158, 11, 0.12)',
+          radius: 5000, // Set back to 5km
+          strokeColor: 'rgba(37, 99, 235, 0.5)', // Blue stroke
+          fillColor: 'rgba(37, 99, 235, 0.12)',   // Blue translucent fill
         };
       case 'gold':
         return {
@@ -122,25 +121,16 @@ export default function PartnerHomeScreen({ navigation }: any) {
           fillColor: 'rgba(16, 185, 129, 0.12)',
         };
     }
-    */
-    return {
-      radius: 3000,
-      strokeColor: 'rgba(16, 185, 129, 0.5)',
-      fillColor: 'rgba(16, 185, 129, 0.12)',
-    };
   };
 
   const getMapDeltas = () => {
     if (!isOnline) return { latitudeDelta: 0.02, longitudeDelta: 0.02 };
-    /* FUTURE UPDATE:
     switch (selectedTier) {
       case 'gold': return { latitudeDelta: 0.16, longitudeDelta: 0.16 };
-      case 'silver': return { latitudeDelta: 0.11, longitudeDelta: 0.11 };
+      case 'silver': return { latitudeDelta: 0.11, longitudeDelta: 0.11 }; // Reverted back to 0.11 for 5km
       case 'basic':
       default: return { latitudeDelta: 0.07, longitudeDelta: 0.07 };
     }
-    */
-    return { latitudeDelta: 0.07, longitudeDelta: 0.07 };
   };
 
   useEffect(() => {
@@ -222,7 +212,6 @@ export default function PartnerHomeScreen({ navigation }: any) {
     }
   };
 
-  /* FUTURE UPDATE:
   const handleTierChange = (tier: 'basic' | 'silver' | 'gold') => {
     setSelectedTier(tier);
     if (isOnline) {
@@ -239,7 +228,6 @@ export default function PartnerHomeScreen({ navigation }: any) {
       );
     }
   };
-  */
 
   const startTimer = () => {
     setTimeLeft(30);
@@ -410,12 +398,13 @@ export default function PartnerHomeScreen({ navigation }: any) {
           </View>
         )}
 
-        {/* FUTURE UPDATE: Membership Tier selector overlay
+        {/* Membership Tier selector overlay */}
         <View style={styles.membershipSelectorBar}>
           {(['basic', 'silver', 'gold'] as const).map((tier) => {
             const active = selectedTier === tier;
             let activeColor = colors.success; // Basic is green
-            if (tier === 'silver' || tier === 'gold') activeColor = colors.warning; // Silver/Gold are yellow/amber
+            if (tier === 'silver') activeColor = '#2563EB'; // Silver is blue
+            else if (tier === 'gold') activeColor = colors.warning; // Gold is yellow/amber
             return (
               <TouchableOpacity
                 key={tier}
@@ -434,7 +423,6 @@ export default function PartnerHomeScreen({ navigation }: any) {
             );
           })}
         </View>
-        */}
       </SafeAreaView>
 
       {/* Incoming Job Popup (30-sec limit) */}

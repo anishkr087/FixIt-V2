@@ -21,9 +21,17 @@ const authMiddleware = (req, res, next) => {
 router.post('/onboard', authMiddleware, async (req, res) => {
   const { name, serviceCategory, experience, serviceArea } = req.body;
   try {
+    let sanitizedCategory = serviceCategory ? serviceCategory.trim() : '';
+    if (sanitizedCategory) {
+      sanitizedCategory = sanitizedCategory
+        .split(' ')
+        .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+        .join(' ');
+    }
+
     const partner = await dbHelper.updatePartnerById(
       req.partnerId,
-      { name, serviceCategory, experience: Number(experience), serviceArea }
+      { name, serviceCategory: sanitizedCategory, experience: Number(experience), serviceArea }
     );
     if (!partner) return res.status(404).json({ error: 'Partner not found' });
     res.json(partner);

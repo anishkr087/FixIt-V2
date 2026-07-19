@@ -150,10 +150,23 @@ io.on('connection', (socket) => {
       serviceCategory
     };
     
+    // Update partner status and location in database
+    try {
+      await dbHelper.updatePartnerById(partnerId, {
+        isOnline: true,
+        location: {
+          coordinates: [lng || 77.2090, lat || 28.6139]
+        }
+      });
+      console.log(`Partner ${partnerId} status updated to online in DB.`);
+    } catch (err) {
+      console.error(`Failed to update online status in DB for partner ${partnerId}:`, err);
+    }
+    
     socket.join('online_partners');
   });
 
-  socket.on('go_offline', (data) => {
+  socket.on('go_offline', async (data) => {
     const { partnerId } = data;
     
     // Authorization Check
@@ -164,6 +177,16 @@ io.on('connection', (socket) => {
 
     console.log(`Partner ${partnerId} offline`);
     delete activePartners[partnerId];
+
+    // Update partner offline status in database
+    try {
+      await dbHelper.updatePartnerById(partnerId, {
+        isOnline: false
+      });
+      console.log(`Partner ${partnerId} status updated to offline in DB.`);
+    } catch (err) {
+      console.error(`Failed to update offline status in DB for partner ${partnerId}:`, err);
+    }
   });
 
   // Client requests a service professional
@@ -236,10 +259,17 @@ io.on('connection', (socket) => {
     let minDistance = Infinity;
 
     try {
-      console.log('[Matching] Performing MongoDB 2dsphere geo-spatial query...');
-      // Query partners within standard 3km limit (3000m)
-      const dbPartners = await dbHelper.findNearestOnlinePartners(lat, lng, category, 3000);
+      console.log(`[Matching] Looking for nearest online partners for category '${category}' at lat: ${lat}, lng: ${lng} within 7km...`);
+      const dbPartners = await dbHelper.findNearestOnlinePartners(lat, lng, category, 7000);
+      console.log(`[Matching] Database RPC returned ${dbPartners ? dbPartners.length : 0} online partner(s) of category '${category}'.`);
+      
       if (dbPartners && dbPartners.length > 0) {
+        dbPartners.forEach((p, idx) => {
+          const distance = getDistanceKm(lat, lng, p.location?.coordinates[1], p.location?.coordinates[0]);
+          const sock = activePartners[p._id.toString()];
+          console.log(`  [Partner #${idx + 1}] ID: ${p._id}, Name: ${p.name || 'No Name'}, Coords: [${p.location?.coordinates}], Distance: ${distance.toFixed(2)} km, Socket: ${sock ? 'Connected (' + sock.socketId + ')' : 'Offline/No Socket'}`);
+        });
+
         const nearestDbPartner = dbPartners[0];
         // Find their active socket connection information
         const partnerSocketInfo = activePartners[nearestDbPartner._id.toString()];
@@ -249,10 +279,15 @@ io.on('connection', (socket) => {
             socketId: partnerSocketInfo.socketId,
             distance: getDistanceKm(lat, lng, nearestDbPartner.location.coordinates[1], nearestDbPartner.location.coordinates[0])
           };
+        } else {
+          console.log(`[Matching] Nearest partner ${nearestDbPartner._id} is online in DB but has no active socket connection.`);
         }
+      } else {
+        // Log all active in-memory partners to see if anyone is connected but not matched in DB
+        console.log(`[Matching] Active socket partners online:`, Object.keys(activePartners));
       }
     } catch (err) {
-      console.error('Geo matching MongoDB error:', err);
+      console.error('Geo matching error:', err);
     }
 
     if (closestPartner) {
@@ -354,7 +389,7 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('update_location', (data) => {
+  socket.on('update_location', async (data) => {
     const { partnerId, lat, lng } = data;
     
     // Authorization Check
@@ -366,6 +401,17 @@ io.on('connection', (socket) => {
     if (activePartners[partnerId]) {
       activePartners[partnerId].lat = lat;
       activePartners[partnerId].lng = lng;
+    }
+
+    // Update partner location in database
+    try {
+      await dbHelper.updatePartnerById(partnerId, {
+        location: {
+          coordinates: [lng, lat]
+        }
+      });
+    } catch (err) {
+      console.error(`Failed to update location in DB for partner ${partnerId}:`, err);
     }
 
     // Broadcast live coordinates to customer if job is in progress
@@ -552,12 +598,21 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('disconnect', () => {
+  socket.on('disconnect', async () => {
     console.log('User disconnected:', socket.id);
     for (const pid in activePartners) {
       if (activePartners[pid].socketId === socket.id) {
         console.log(`Partner ${pid} automatically removed on disconnect`);
         delete activePartners[pid];
+        // Set offline in database on disconnect
+        try {
+          await dbHelper.updatePartnerById(pid, {
+            isOnline: false
+          });
+          console.log(`Partner ${pid} status updated to offline in DB on disconnect.`);
+        } catch (err) {
+          console.error(`Failed to update offline status in DB for partner ${pid} on disconnect:`, err);
+        }
         break;
       }
     }

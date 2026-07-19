@@ -122,7 +122,7 @@ BEGIN
   FROM partners p
   WHERE p.is_online = true 
     AND p.wallet_balance > -500
-    AND p.service_category = p_category
+    AND LOWER(p.service_category) = LOWER(p_category)
     AND (6371000 * acos(
       cos(radians(p_lat)) * cos(radians(p.location_lat)) * cos(radians(p.location_lng) - radians(p_lng)) +
       sin(radians(p_lat)) * sin(radians(p.location_lat))
