@@ -11,8 +11,7 @@ CREATE TABLE IF NOT EXISTS customers (
 
 -- 2. Partners Table
 CREATE TABLE IF NOT EXISTS partners (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  phone VARCHAR UNIQUE NOT NULL,
+  phone VARCHAR PRIMARY KEY,
   name VARCHAR,
   profile_photo VARCHAR,
   service_category VARCHAR,
@@ -43,7 +42,7 @@ CREATE TABLE IF NOT EXISTS job_requests (
   problem_description TEXT NOT NULL,
   estimated_price NUMERIC NOT NULL,
   status VARCHAR DEFAULT 'pending', -- pending, accepted, on_the_way, reached, work_started, completed, cancelled
-  assigned_partner UUID REFERENCES partners(id) ON DELETE SET NULL,
+  assigned_partner VARCHAR REFERENCES partners(phone) ON DELETE SET NULL,
   payment_method VARCHAR DEFAULT 'COD',
   customer_location_lat NUMERIC NOT NULL,
   customer_location_lng NUMERIC NOT NULL,
@@ -54,7 +53,7 @@ CREATE TABLE IF NOT EXISTS job_requests (
 -- 4. Transactions Table
 CREATE TABLE IF NOT EXISTS transactions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  partner_id UUID NOT NULL REFERENCES partners(id) ON DELETE CASCADE,
+  partner_id VARCHAR NOT NULL REFERENCES partners(phone) ON DELETE CASCADE,
   job_id UUID REFERENCES job_requests(id) ON DELETE SET NULL,
   type VARCHAR NOT NULL, -- earning, withdrawal, commission_deduction
   amount NUMERIC NOT NULL,
@@ -63,6 +62,8 @@ CREATE TABLE IF NOT EXISTS transactions (
 );
 
 -- 5. RPC Geospatial Function for Matchmaking
+DROP FUNCTION IF EXISTS find_nearest_online_partners(numeric,numeric,character varying,numeric);
+
 CREATE OR REPLACE FUNCTION find_nearest_online_partners(
   p_lat NUMERIC,
   p_lng NUMERIC,
@@ -70,7 +71,7 @@ CREATE OR REPLACE FUNCTION find_nearest_online_partners(
   p_max_distance_meters NUMERIC
 )
 RETURNS TABLE (
-  id UUID,
+  id VARCHAR, -- returns partner phone as id for backward compatibility
   phone VARCHAR,
   name VARCHAR,
   profile_photo VARCHAR,
@@ -95,7 +96,7 @@ RETURNS TABLE (
 BEGIN
   RETURN QUERY
   SELECT 
-    p.id,
+    p.phone AS id,
     p.phone,
     p.name,
     p.profile_photo,
@@ -122,7 +123,7 @@ BEGIN
   FROM partners p
   WHERE p.is_online = true 
     AND p.wallet_balance > -500
-    AND LOWER(p.service_category) = LOWER(p_category)
+    AND LOWER(p_category) = ANY(string_to_array(LOWER(p.service_category), ','))
     AND (6371000 * acos(
       cos(radians(p_lat)) * cos(radians(p.location_lat)) * cos(radians(p.location_lng) - radians(p_lng)) +
       sin(radians(p_lat)) * sin(radians(p.location_lat))

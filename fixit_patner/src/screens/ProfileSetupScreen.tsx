@@ -15,20 +15,31 @@ type NavigationProp = NativeStackNavigationProp<AuthStackParamList, 'DocumentUpl
 
 export default function ProfileSetupScreen() {
   const [name, setName] = useState('');
-  const [serviceCategory, setServiceCategory] = useState('');
+  const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
   const [experience, setExperience] = useState('');
   const [serviceArea, setServiceArea] = useState('');
   const [loading, setLoading] = useState(false);
+
+  const toggleCategory = (category: string) => {
+    if (selectedCategories.includes(category)) {
+      setSelectedCategories(selectedCategories.filter(c => c !== category));
+    } else {
+      setSelectedCategories([...selectedCategories, category]);
+    }
+  };
   
   const navigation = useNavigation<NavigationProp>();
   const { token, updatePartner } = useAuth();
 
   const handleContinue = async () => {
-    if (name && serviceCategory && experience && serviceArea) {
+    if (name && selectedCategories.length > 0 && experience && serviceArea) {
       try {
         setLoading(true);
         const response = await axios.post(`${API_URL}/partner/onboard`, {
-          name, serviceCategory, experience: Number(experience), serviceArea
+          name, 
+          serviceCategory: selectedCategories.join(','), 
+          experience: Number(experience), 
+          serviceArea
         }, {
           headers: { Authorization: `Bearer ${token}` }
         });
@@ -64,8 +75,23 @@ export default function ProfileSetupScreen() {
             <Text style={styles.label}>Full Name</Text>
             <TextInput style={styles.input} placeholder="e.g. Ramesh Kumar" value={name} onChangeText={setName} />
 
-            <Text style={styles.label}>Service Category</Text>
-            <TextInput style={styles.input} placeholder="e.g. Electrician, Plumber" value={serviceCategory} onChangeText={setServiceCategory} />
+            <Text style={styles.label}>Service Category (Select one or more)</Text>
+            <View style={styles.chipContainer}>
+              {['Electrician', 'Plumber', 'Cleaning', 'Pest Control', 'Carpenter', 'Mechanic'].map((cat) => {
+                const isSelected = selectedCategories.includes(cat);
+                return (
+                  <TouchableOpacity
+                    key={cat}
+                    style={[styles.chip, isSelected && styles.chipActive]}
+                    onPress={() => toggleCategory(cat)}
+                  >
+                    <Text style={[styles.chipText, isSelected && styles.chipTextActive]}>
+                      {cat}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
 
             <Text style={styles.label}>Experience (Years)</Text>
             <TextInput style={styles.input} placeholder="e.g. 5" keyboardType="number-pad" value={experience} onChangeText={setExperience} />
@@ -107,5 +133,32 @@ const styles = StyleSheet.create({
     backgroundColor: colors.primary, height: 56, borderRadius: 12, alignItems: 'center', justifyContent: 'center', marginTop: 12,
   },
   buttonDisabled: { opacity: 0.5 },
-  buttonText: { color: colors.card, fontSize: 16, fontWeight: 'bold' }
+  buttonText: { color: colors.card, fontSize: 16, fontWeight: 'bold' },
+  chipContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginBottom: 20,
+  },
+  chip: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.card,
+  },
+  chipActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  chipText: {
+    fontSize: 14,
+    color: colors.text,
+    fontWeight: '500',
+  },
+  chipTextActive: {
+    color: colors.card,
+    fontWeight: 'bold',
+  },
 });

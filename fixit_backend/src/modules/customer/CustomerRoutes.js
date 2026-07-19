@@ -5,7 +5,7 @@ const router = express.Router();
 
 // Middleware to validate phone format
 const validatePhone = (req, res, next) => {
-  const phone = req.body.phone || req.params.phone;
+  const phone = (req.body ? req.body.phone : null) || req.params.phone;
   if (!phone) {
     return res.status(400).json({ error: 'Phone number is required' });
   }

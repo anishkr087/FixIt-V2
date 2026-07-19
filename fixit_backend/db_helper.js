@@ -81,7 +81,7 @@ const findPartnerById = async (id) => {
   const { data, error } = await supabase
     .from('partners')
     .select('*')
-    .eq('id', id)
+    .eq('phone', id)
     .maybeSingle();
 
   if (error) {
@@ -123,7 +123,7 @@ const updatePartnerById = async (id, updateData) => {
   const { data, error } = await supabase
     .from('partners')
     .update(dataToUpdate)
-    .eq('id', id)
+    .eq('phone', id)
     .select('*')
     .single();
 
@@ -201,9 +201,10 @@ function decryptPartnerData(partner) {
   
   const partnerObj = { ...partner };
   
-  // Map PostgreSQL UUID id to _id for backend Mongoose compat
-  if (partnerObj.id) {
-    partnerObj._id = partnerObj.id;
+  // Map PostgreSQL phone to _id and id for backend Mongoose compat
+  if (partnerObj.phone) {
+    partnerObj._id = partnerObj.phone;
+    partnerObj.id = partnerObj.phone;
   }
   
   if (partnerObj.id_proof) {

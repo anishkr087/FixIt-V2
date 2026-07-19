@@ -24,9 +24,15 @@ router.post('/onboard', authMiddleware, async (req, res) => {
     let sanitizedCategory = serviceCategory ? serviceCategory.trim() : '';
     if (sanitizedCategory) {
       sanitizedCategory = sanitizedCategory
-        .split(' ')
-        .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
-        .join(' ');
+        .split(',')
+        .map(cat => {
+          return cat.trim()
+            .split(' ')
+            .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+            .join(' ');
+        })
+        .filter(Boolean)
+        .join(',');
     }
 
     const partner = await dbHelper.updatePartnerById(
