@@ -1,5 +1,33 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, Dimensions, TouchableOpacity, SafeAreaView, ActivityIndicator, Platform, Alert } from 'react-native';
+import { View, Text, StyleSheet, Dimensions, TouchableOpacity, SafeAreaView, ActivityIndicator, Platform, Alert, Vibration } from 'react-native';
+
+const playAlarmSound = () => {
+  try {
+    if (Platform.OS !== 'web') {
+      Vibration.vibrate([0, 500, 200, 500, 200, 500]);
+    }
+    if (typeof window !== 'undefined' && ((window as any).AudioContext || (window as any).webkitAudioContext)) {
+      const AudioCtx = (window as any).AudioContext || (window as any).webkitAudioContext;
+      const ctx = new AudioCtx();
+      [0, 0.22, 0.44, 0.66].forEach((delay) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(880, ctx.currentTime + delay);
+        osc.frequency.exponentialRampToValueAtTime(1320, ctx.currentTime + delay + 0.15);
+        gain.gain.setValueAtTime(0.4, ctx.currentTime + delay);
+        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + delay + 0.18);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(ctx.currentTime + delay);
+        osc.stop(ctx.currentTime + delay + 0.2);
+      });
+    }
+  } catch (e) {
+    console.log('Alarm sound notification note:', e);
+  }
+};
+
 // Lazy-load react-native-maps to prevent crash if native module not ready
 let MapView: any = null, Marker: any = null, Polyline: any = null, Circle: any = null;
 try { const M = require('react-native-maps'); MapView = M.default; Marker = M.Marker; Polyline = M.Polyline; Circle = M.Circle; } catch(e) { console.warn('Maps unavailable', e); }
@@ -102,9 +130,6 @@ export default function PartnerHomeScreen({ navigation }: any) {
   }, [navigation]);
   
   // Membership settings (Commented out for future update)
-  // Membership settings
-  const [selectedTier, setSelectedTier] = useState<'basic' | 'silver' | 'gold'>(partnerInfo?.membershipTier || 'basic');
-
   const socketRef = useRef<Socket | null>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const locationSubRef = useRef<Location.LocationSubscription | null>(null);
@@ -127,37 +152,16 @@ export default function PartnerHomeScreen({ navigation }: any) {
   }, [jobStatus]);
 
   const getTierConfig = () => {
-    switch (selectedTier) {
-      case 'silver':
-        return {
-          radius: 5000, // Set back to 5km
-          strokeColor: 'rgba(37, 99, 235, 0.5)', // Blue stroke
-          fillColor: 'rgba(37, 99, 235, 0.12)',   // Blue translucent fill
-        };
-      case 'gold':
-        return {
-          radius: 7500,
-          strokeColor: 'rgba(245, 158, 11, 0.5)',
-          fillColor: 'rgba(245, 158, 11, 0.12)',
-        };
-      case 'basic':
-      default:
-        return {
-          radius: 3000,
-          strokeColor: 'rgba(16, 185, 129, 0.5)',
-          fillColor: 'rgba(16, 185, 129, 0.12)',
-        };
-    }
+    return {
+      radius: 7500, // Fixed 7.5 km coverage range for all partners
+      strokeColor: 'rgba(37, 99, 235, 0.5)',
+      fillColor: 'rgba(37, 99, 235, 0.12)',
+    };
   };
 
   const getMapDeltas = () => {
     if (!isOnline) return { latitudeDelta: 0.02, longitudeDelta: 0.02 };
-    switch (selectedTier) {
-      case 'gold': return { latitudeDelta: 0.16, longitudeDelta: 0.16 };
-      case 'silver': return { latitudeDelta: 0.11, longitudeDelta: 0.11 }; // Reverted back to 0.11 for 5km
-      case 'basic':
-      default: return { latitudeDelta: 0.07, longitudeDelta: 0.07 };
-    }
+    return { latitudeDelta: 0.16, longitudeDelta: 0.16 };
   };
 
   useEffect(() => {
@@ -173,32 +177,21 @@ export default function PartnerHomeScreen({ navigation }: any) {
     // 1. Get GPS Permissions
     let { status } = await Location.requestForegroundPermissionsAsync();
     if (status !== 'granted') {
-      Alert.alert('Permission Denied', 'Please allow location tracking to use the partner app.');
+      Alert.alert('Permission Denied', 'Please allow location permission to use the partner app.');
       setLoading(false);
       return;
     }
 
-    // Get initial location
-    const location = await Location.getCurrentPositionAsync({});
-    setCurrentLocation(location);
+    // Get initial location once for map display
+    try {
+      const location = await Location.getCurrentPositionAsync({});
+      setCurrentLocation(location);
+    } catch (e) {
+      console.log('Initial location fetch note:', e);
+    }
     setLoading(false);
 
-    // 2. Start Live Tracking Broadcast
-    locationSubRef.current = await Location.watchPositionAsync(
-      { accuracy: Location.Accuracy.High, timeInterval: 5000, distanceInterval: 10 },
-      (loc) => {
-        setCurrentLocation(loc);
-        if (isOnlineRef.current && socketRef.current) {
-          socketRef.current.emit('update_location', { 
-            partnerId: partnerInfo?._id, 
-            lat: loc.coords.latitude, 
-            lng: loc.coords.longitude 
-          });
-        }
-      }
-    );
-
-    // 3. Setup Socket
+    // 2. Setup Socket
     socketRef.current = io(SOCKET_URL, {
       auth: { token }
     });
@@ -210,6 +203,7 @@ export default function PartnerHomeScreen({ navigation }: any) {
       // Use refs to read current state values — avoids stale closure
       if (!acceptedJobRef.current && !jobStatusRef.current) { 
         setIncomingJob(jobData);
+        playAlarmSound(); // Trigger alarm sound & vibration notification
         startTimer();
       }
     });
@@ -227,26 +221,7 @@ export default function PartnerHomeScreen({ navigation }: any) {
     const newStatus = !isOnline;
     setIsOnline(newStatus);
     if (newStatus) {
-      // Request background permissions for continuous tracking
-      try {
-        const { status: bgStatus } = await Location.requestBackgroundPermissionsAsync();
-        if (bgStatus === 'granted') {
-          await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, {
-            accuracy: Location.Accuracy.High,
-            timeInterval: 5000,
-            distanceInterval: 10,
-            showsBackgroundLocationIndicator: true,
-            foregroundService: {
-              notificationTitle: "FixIt Partner Active",
-              notificationBody: "Monitoring nearby service requests in real-time."
-            }
-          });
-        }
-      } catch (err) {
-        console.log('[Background Location] Background permission note:', err);
-      }
-
-      // Re-fetch current location to ensure accuracy before going online
+      // Fetch current GPS position ONCE when partner clicks Go Online
       let loc = currentLocation;
       try {
         loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
@@ -255,41 +230,16 @@ export default function PartnerHomeScreen({ navigation }: any) {
         console.log('Error getting position for go_online:', err);
       }
 
+      console.log(`[Go Online] Sending location ONCE for partner ${partnerInfo?._id}:`, loc?.coords.latitude, loc?.coords.longitude);
+
       socketRef.current?.emit('go_online', { 
         partnerId: partnerInfo?._id,
         lat: loc?.coords.latitude,
         lng: loc?.coords.longitude,
-        membershipTier: selectedTier,
         serviceCategory: partnerInfo?.serviceCategory
       });
     } else {
-      try {
-        const hasStarted = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
-        if (hasStarted) {
-          await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
-        }
-      } catch (err) {
-        console.log('Error stopping background location task:', err);
-      }
-
       socketRef.current?.emit('go_offline', { partnerId: partnerInfo?._id });
-    }
-  };
-
-  const handleTierChange = (tier: 'basic' | 'silver' | 'gold') => {
-    setSelectedTier(tier);
-    if (isOnline) {
-      socketRef.current?.emit('go_online', {
-        partnerId: partnerInfo?._id,
-        lat: currentLocation?.coords.latitude,
-        lng: currentLocation?.coords.longitude,
-        membershipTier: tier,
-        serviceCategory: partnerInfo?.serviceCategory
-      });
-      Alert.alert(
-        'Range Extended', 
-        `Switched to ${tier.toUpperCase()}. Service range is now ${tier === 'basic' ? '3km' : tier === 'silver' ? '5km' : '7.5km'}.`
-      );
     }
   };
 
@@ -448,9 +398,12 @@ export default function PartnerHomeScreen({ navigation }: any) {
             <View style={[styles.statusDot, { backgroundColor: isOnline ? colors.success : colors.textSecondary }]} />
             <Text style={styles.statusText}>{isOnline ? 'Online' : 'Offline'}</Text>
           </TouchableOpacity>
-          <TouchableOpacity onPress={logout} style={styles.logoutButton}>
-            <Text style={styles.logoutText}>Logout</Text>
-          </TouchableOpacity>
+        </View>
+
+        {/* 7.5km Coverage Range Header Notice */}
+        <View style={styles.rangeInfoBanner}>
+          <MapPin size={16} color="#2563EB" style={{ marginRight: 6 }} />
+          <Text style={styles.rangeInfoText}>You can only accept jobs within 7.5km of range 📍</Text>
         </View>
 
         {/* Warning Banner for Low Balance (wallet <= -300 and > -500) */}
@@ -461,32 +414,6 @@ export default function PartnerHomeScreen({ navigation }: any) {
             </Text>
           </View>
         )}
-
-        {/* Membership Tier selector overlay */}
-        <View style={styles.membershipSelectorBar}>
-          {(['basic', 'silver', 'gold'] as const).map((tier) => {
-            const active = selectedTier === tier;
-            let activeColor = colors.success; // Basic is green
-            if (tier === 'silver') activeColor = '#2563EB'; // Silver is blue
-            else if (tier === 'gold') activeColor = colors.warning; // Gold is yellow/amber
-            return (
-              <TouchableOpacity
-                key={tier}
-                style={[
-                  styles.tierTab,
-                  active && { backgroundColor: activeColor, borderColor: activeColor }
-                ]}
-                onPress={() => handleTierChange(tier)}
-                disabled={!!acceptedJob}
-              >
-                <Shield size={12} color={active ? '#FFF' : colors.textSecondary} style={{ marginRight: 4 }} />
-                <Text style={[styles.tierTabText, active && styles.tierTabTextActive]}>
-                  {tier.toUpperCase()} ({tier === 'basic' ? '3km' : tier === 'silver' ? '5km' : '7.5km'})
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
       </SafeAreaView>
 
       {/* Incoming Job Popup (30-sec limit) */}
@@ -600,7 +527,7 @@ const styles = StyleSheet.create({
   centerElements: { justifyContent: 'center', alignItems: 'center' },
   map: { width: width, height: height },
   topBarContainer: { position: 'absolute', top: 0, width: '100%' },
-  topBar: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 20, paddingTop: Platform.OS === 'android' ? 24 : 10 },
+  topBar: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 20, paddingTop: Platform.OS === 'android' ? 44 : 20, marginTop: 12 },
   statusBadge: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.card, paddingHorizontal: 16, paddingVertical: 10, borderRadius: 20, elevation: 3 },
   statusDot: { width: 10, height: 10, borderRadius: 5, marginRight: 8 },
   statusText: { fontWeight: 'bold', color: colors.text },
@@ -770,5 +697,28 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     fontSize: 15,
     fontWeight: '600',
+  },
+  rangeInfoBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#EFF6FF',
+    marginHorizontal: 20,
+    marginTop: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#93C5FD',
+    elevation: 3,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+  },
+  rangeInfoText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#1E40AF',
   },
 });

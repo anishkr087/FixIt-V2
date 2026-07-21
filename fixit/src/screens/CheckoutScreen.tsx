@@ -8,8 +8,38 @@ import {
   Alert, 
   Modal, 
   TextInput, 
-  ActivityIndicator 
+  ActivityIndicator,
+  Vibration,
+  Platform 
 } from 'react-native';
+
+const playSuccessChimeSound = () => {
+  try {
+    if (Platform.OS !== 'web') {
+      Vibration.vibrate([0, 300, 100, 300]);
+    }
+    if (typeof window !== 'undefined' && ((window as any).AudioContext || (window as any).webkitAudioContext)) {
+      const AudioCtx = (window as any).AudioContext || (window as any).webkitAudioContext;
+      const ctx = new AudioCtx();
+      const notes = [523.25, 659.25, 783.99]; // C5, E5, G5 major triad
+      notes.forEach((freq, idx) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(freq, ctx.currentTime + idx * 0.12);
+        gain.gain.setValueAtTime(0.3, ctx.currentTime + idx * 0.12);
+        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + idx * 0.12 + 0.3);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(ctx.currentTime + idx * 0.12);
+        osc.stop(ctx.currentTime + idx * 0.12 + 0.35);
+      });
+    }
+  } catch (e) {
+    console.log('Success chime notification note:', e);
+  }
+};
+
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
@@ -95,7 +125,12 @@ export const CheckoutScreen = ({ navigation }: any) => {
 
   useEffect(() => {
     if (!socket) return;
-    const handleBookingUpdate = (data: any) => setBooking(data);
+    const handleBookingUpdate = (data: any) => {
+      setBooking(data);
+      if (data && (data.status === 'accepted' || data.assignedPartner || data.status === 'on_the_way')) {
+        playSuccessChimeSound(); // Trigger audio chime & haptic vibration when partner assigned!
+      }
+    };
     const handlePartnerLocation = (data: any) => setPartnerLocation({ lat: data.lat, lng: data.lng });
     socket.on('booking_status_update', handleBookingUpdate);
     socket.on('partner_location_update', handlePartnerLocation);

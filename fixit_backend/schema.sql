@@ -40,8 +40,16 @@ CREATE TABLE IF NOT EXISTS partners (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Create spatial index or btree index for geolocation searches
-CREATE INDEX IF NOT EXISTS idx_partners_online_category ON partners (is_online, service_category);
+-- 2.1 Online Partners Table for Real-Time 7.5km Broadcast
+CREATE TABLE IF NOT EXISTS online_partners (
+  partner_id VARCHAR PRIMARY KEY REFERENCES partners(phone) ON DELETE CASCADE,
+  service_category VARCHAR NOT NULL,
+  location_lat NUMERIC NOT NULL DEFAULT 0,
+  location_lng NUMERIC NOT NULL DEFAULT 0,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_online_partners_category ON online_partners (service_category);
 
 -- 3. Job Requests Table
 CREATE TABLE IF NOT EXISTS job_requests (

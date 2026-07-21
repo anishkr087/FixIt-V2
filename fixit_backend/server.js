@@ -140,14 +140,13 @@ io.on('connection', (socket) => {
       console.error('Error verifying suspension on go_online:', err);
     }
 
-    console.log(`Partner ${partnerId} (${membershipTier}) [${serviceCategory || 'No Category'}] online at: ${lat}, ${lng}`);
+    console.log(`Partner ${partnerId} [${serviceCategory || 'No Category'}] online at: ${lat}, ${lng}`);
     
     activePartners[partnerId] = {
       socketId: socket.id,
-      lat: lat || 28.6139,
-      lng: lng || 77.2090,
-      membershipTier,
-      serviceCategory
+      lat: lat || 25.0113,
+      lng: lng || 84.0200,
+      serviceCategory: serviceCategory || 'Electrician'
     };
     
     // Update partner status and location in database
@@ -155,10 +154,26 @@ io.on('connection', (socket) => {
       await dbHelper.updatePartnerById(partnerId, {
         isOnline: true,
         location: {
-          coordinates: [lng || 77.2090, lat || 28.6139]
+          coordinates: [lng || 84.0200, lat || 25.0113]
         }
       });
-      console.log(`Partner ${partnerId} status updated to online in DB.`);
+
+      // Maintain online_partners table in Supabase DB for 7.5km real-time broadcasts
+      try {
+        await supabase
+          .from('online_partners')
+          .upsert({
+            partner_id: partnerId,
+            service_category: serviceCategory || 'Electrician',
+            location_lat: lat || 25.0113,
+            location_lng: lng || 84.0200,
+            updated_at: new Date()
+          }, { onConflict: 'partner_id' });
+      } catch (opErr) {
+        console.warn('online_partners upsert note:', opErr.message || opErr);
+      }
+
+      console.log(`Partner ${partnerId} status updated to online in DB & online_partners table.`);
     } catch (err) {
       console.error(`Failed to update online status in DB for partner ${partnerId}:`, err);
     }
@@ -183,7 +198,12 @@ io.on('connection', (socket) => {
       await dbHelper.updatePartnerById(partnerId, {
         isOnline: false
       });
-      console.log(`Partner ${partnerId} status updated to offline in DB.`);
+      try {
+        await supabase.from('online_partners').delete().eq('partner_id', partnerId);
+      } catch (opErr) {
+        console.warn('online_partners delete note:', opErr.message || opErr);
+      }
+      console.log(`Partner ${partnerId} status updated to offline in DB & online_partners table.`);
     } catch (err) {
       console.error(`Failed to update offline status in DB for partner ${partnerId}:`, err);
     }
@@ -240,9 +260,35 @@ io.on('connection', (socket) => {
     activeJobs[newJob.jobId] = newJob;
     customerSockets[customerId] = socket.id;
 
-    // Save to Supabase strictly
+    // Save to Supabase with automatic customer record creation & fallback handling
     try {
-      const { data: savedJob, error: dbError } = await supabase
+      // 1. Ensure customer record exists in DB to avoid foreign key violation
+      try {
+        await supabase
+          .from('customers')
+          .upsert({
+            phone: customerId,
+            name: customerName || 'Valued Customer',
+            location: fullAddress || null,
+            full_address: fullAddress || null,
+            house_no: houseNo || null,
+            street_address: streetAddress || null,
+            landmark: landmark || null,
+            location_lat: lat || 0,
+            location_lng: lng || 0,
+            alternate_phone: altPhone || null,
+            address_type: addressType || 'Home'
+          }, { onConflict: 'phone' });
+      } catch (custErr) {
+        console.warn('[Supabase Warning] Customer auto-upsert note:', custErr.message || custErr);
+      }
+
+      // 2. Insert into job_requests
+      let savedJob = null;
+      let dbError = null;
+
+      // Primary insert attempt with all address fields
+      const res1 = await supabase
         .from('job_requests')
         .insert({
           customer_id: customerId,
@@ -262,109 +308,153 @@ io.on('connection', (socket) => {
         .select('*')
         .single();
 
-      if (dbError) throw dbError;
-      
-      // Update customer profile with default location and address if provided
-      if (fullAddress || lat || lng) {
-        await supabase
-          .from('customers')
-          .update({
-            location: fullAddress || undefined,
-            full_address: fullAddress || undefined,
-            house_no: houseNo || undefined,
-            street_address: streetAddress || undefined,
-            landmark: landmark || undefined,
-            location_lat: lat || undefined,
-            location_lng: lng || undefined,
-            alternate_phone: altPhone || undefined,
-            address_type: addressType || undefined
+      savedJob = res1.data;
+      dbError = res1.error;
+
+      // Fallback insert attempt if new columns (alt_phone, address_type) throw schema error
+      if (dbError) {
+        console.warn('[Supabase Warning] Primary insert error:', dbError.message || dbError, '- attempting base schema insert...');
+        const res2 = await supabase
+          .from('job_requests')
+          .insert({
+            customer_id: customerId,
+            problem_description: problemDescription,
+            estimated_price: estimatedPrice,
+            payment_method: paymentMethod,
+            status: 'pending',
+            customer_location_lat: lat,
+            customer_location_lng: lng,
+            full_address: fullAddress || null,
+            house_no: houseNo || null,
+            street_address: streetAddress || null,
+            landmark: landmark || null
           })
-          .eq('phone', customerId);
+          .select('*')
+          .single();
+
+        savedJob = res2.data;
+        dbError = res2.error;
       }
 
-      // Re-key in-memory registry with real UUID ID
-      const tempJobId = newJob.jobId; // preserve temp key before overwriting
-      newJob.jobId = savedJob.id;
-      activeJobs[savedJob.id] = newJob;
-      delete activeJobs[tempJobId]; // delete the old temp key, not the new one
-      console.log(`JobRequest persisted in Supabase with ID: ${savedJob.id}`);
+      if (savedJob && savedJob.id) {
+        const tempJobId = newJob.jobId;
+        newJob.jobId = savedJob.id;
+        activeJobs[savedJob.id] = newJob;
+        delete activeJobs[tempJobId];
+        console.log(`JobRequest persisted in Supabase with ID: ${savedJob.id}`);
+      } else if (dbError) {
+        console.error('[Supabase Error] JobRequest DB error (continuing with memory job):', dbError.message || dbError);
+      }
     } catch (err) {
-      console.error('Failed to persist JobRequest to database:', err);
-      socket.emit('booking_status_update', {
-        status: 'error',
-        message: 'Could not create booking request due to database failure.'
-      });
-      return;
+      console.error('Failed to persist JobRequest to database (continuing with memory job):', err.message || err);
     }
 
     const activeJobId = newJob.jobId;
 
-    // Run matching algorithm to locate closest online partner of matching serviceCategory
-    let closestPartner = null;
-    let minDistance = Infinity;
+    // Multi-Partner Broadcast Algorithm: Broadcast to ALL active online partners within 7.5km
+    let matchedPartners = [];
 
     try {
-      console.log(`[Matching] Looking for nearest online partners for category '${category}' at lat: ${lat}, lng: ${lng} within 7km...`);
-      const dbPartners = await dbHelper.findNearestOnlinePartners(lat, lng, category, 7000);
-      console.log(`[Matching] Database RPC returned ${dbPartners ? dbPartners.length : 0} online partner(s) of category '${category}'.`);
+      console.log(`[Multi-Broadcast] Looking for ALL online partners for category '${category}' at lat: ${lat}, lng: ${lng} within 7.5km...`);
       
-      if (dbPartners && dbPartners.length > 0) {
-        dbPartners.forEach((p, idx) => {
-          const distance = getDistanceKm(lat, lng, p.location?.coordinates[1], p.location?.coordinates[0]);
-          const sock = activePartners[p._id.toString()];
-          console.log(`  [Partner #${idx + 1}] ID: ${p._id}, Name: ${p.name || 'No Name'}, Coords: [${p.location?.coordinates}], Distance: ${distance.toFixed(2)} km, Socket: ${sock ? 'Connected (' + sock.socketId + ')' : 'Offline/No Socket'}`);
-        });
-
-        const nearestDbPartner = dbPartners[0];
-        // Find their active socket connection information
-        const partnerSocketInfo = activePartners[nearestDbPartner._id.toString()];
-        if (partnerSocketInfo) {
-          closestPartner = {
-            partnerId: nearestDbPartner._id.toString(),
-            socketId: partnerSocketInfo.socketId,
-            distance: getDistanceKm(lat, lng, nearestDbPartner.location.coordinates[1], nearestDbPartner.location.coordinates[0])
-          };
-        } else {
-          console.log(`[Matching] Nearest partner ${nearestDbPartner._id} is online in DB but has no active socket connection.`);
+      // 1. Fetch online partners from DB table 'online_partners'
+      let dbOnlineList = [];
+      try {
+        const { data: rows } = await supabase
+          .from('online_partners')
+          .select('*');
+        if (rows && rows.length > 0) {
+          dbOnlineList = rows;
         }
-      } else {
-        // Log all active in-memory partners to see if anyone is connected but not matched in DB
-        console.log(`[Matching] Active socket partners online:`, Object.keys(activePartners));
+      } catch (err) {
+        console.warn('online_partners query note:', err.message || err);
       }
+
+      // Fallback: If DB table empty, query active RPC partners
+      if (dbOnlineList.length === 0) {
+        const rpcPartners = await dbHelper.findNearestOnlinePartners(lat, lng, category, 7500);
+        if (rpcPartners && rpcPartners.length > 0) {
+          dbOnlineList = rpcPartners.map(p => ({
+            partner_id: p._id.toString(),
+            service_category: p.service_category || category,
+            location_lat: p.location?.coordinates[1] || lat,
+            location_lng: p.location?.coordinates[0] || lng
+          }));
+        }
+      }
+
+      // Also merge active connected partners in memory
+      Object.keys(activePartners).forEach(pId => {
+        const memPartner = activePartners[pId];
+        if (!dbOnlineList.some(p => p.partner_id === pId)) {
+          dbOnlineList.push({
+            partner_id: pId,
+            service_category: memPartner.serviceCategory || category,
+            location_lat: memPartner.lat,
+            location_lng: memPartner.lng
+          });
+        }
+      });
+
+      // 2. Filter partners within 7.5 km range & matching service category
+      dbOnlineList.forEach(p => {
+        const pLat = parseFloat(p.location_lat);
+        const pLng = parseFloat(p.location_lng);
+        const distKm = getDistanceKm(lat, lng, pLat, pLng);
+
+        const categoryMatch = !category || !p.service_category ||
+          p.service_category.toLowerCase().includes(category.toLowerCase()) ||
+          category.toLowerCase().includes(p.service_category.toLowerCase());
+
+        if (distKm <= 7.5 && categoryMatch) {
+          const sock = activePartners[p.partner_id];
+          if (sock && sock.socketId) {
+            matchedPartners.push({
+              partnerId: p.partner_id,
+              socketId: sock.socketId,
+              distance: distKm
+            });
+          }
+        }
+      });
+
+      console.log(`[Multi-Broadcast] Found ${matchedPartners.length} active online partner(s) within 7.5km range.`);
     } catch (err) {
-      console.error('Geo matching error:', err);
+      console.error('Geo broadcast matching error:', err);
     }
 
-    if (closestPartner) {
-      console.log(`>> Professional found: Partner ${closestPartner.partnerId} at ${closestPartner.distance.toFixed(2)} km. Emitting booking request...`);
-      
-      activeJobs[activeJobId].assignedPartner = closestPartner.partnerId;
+    if (matchedPartners.length > 0) {
+      // Record notified partner IDs for assignment race
+      newJob.notifiedPartners = matchedPartners.map(m => m.partnerId);
 
-      io.to(closestPartner.socketId).emit('new_job_broadcast', {
-        jobId: activeJobId,
-        problemDescription,
-        customerName,
-        estimatedPrice,
-        distance: parseFloat(closestPartner.distance.toFixed(1)),
-        lat,
-        lng,
-        fullAddress: fullAddress || '',
-        houseNo: houseNo || '',
-        streetAddress: streetAddress || '',
-        landmark: landmark || ''
+      matchedPartners.forEach(mp => {
+        console.log(`>> Broadcasting job ${activeJobId} to Partner ${mp.partnerId} (${mp.distance.toFixed(2)} km away)...`);
+        io.to(mp.socketId).emit('new_job_broadcast', {
+          jobId: activeJobId,
+          problemDescription,
+          customerName,
+          estimatedPrice,
+          distance: parseFloat(mp.distance.toFixed(1)),
+          lat,
+          lng,
+          fullAddress: fullAddress || '',
+          houseNo: houseNo || '',
+          streetAddress: streetAddress || '',
+          landmark: landmark || ''
+        });
       });
 
       socket.emit('booking_status_update', {
         jobId: activeJobId,
         status: 'broadcasted',
-        message: 'Looking for professionals in your area...'
+        message: `Looking for professionals near you (${matchedPartners.length} online nearby)...`
       });
     } else {
-      console.log(`>> No partner found in range for category: ${category}`);
+      console.log(`>> No online partner found in 7.5km range for category: ${category}`);
       socket.emit('booking_status_update', {
         jobId: activeJobId,
         status: 'no_partners',
-        message: 'No professionals are currently online near you.'
+        message: 'No professionals are currently online near your location (7.5 km range).'
       });
     }
   });
@@ -378,10 +468,18 @@ io.on('connection', (socket) => {
       return;
     }
 
-    console.log(`Partner ${partnerId} accepted Job ${jobId}`);
+    console.log(`Partner ${partnerId} attempting to accept Job ${jobId}...`);
 
     if (activeJobs[jobId]) {
       const job = activeJobs[jobId];
+
+      // Assignment Race Guard: If already accepted by another partner
+      if (job.status === 'accepted' || job.assignedPartner) {
+        console.log(`[Accept Job Race] Job ${jobId} already accepted by partner ${job.assignedPartner}. Notifying partner ${partnerId}.`);
+        socket.emit('job_assigned_to_other', { jobId });
+        return;
+      }
+
       job.status = 'accepted';
       job.assignedPartner = partnerId;
 
@@ -396,8 +494,15 @@ io.on('connection', (socket) => {
         if (updateError) throw updateError;
       } catch (err) {
         console.error('Supabase accept_job error:', err.message);
-        return;
       }
+
+      // Notify all other notified online partners that the job was assigned
+      const notifiedPartnerIds = job.notifiedPartners || [];
+      notifiedPartnerIds.forEach(pId => {
+        if (pId !== partnerId && activePartners[pId]) {
+          io.to(activePartners[pId].socketId).emit('job_assigned_to_other', { jobId });
+        }
+      });
 
       // Retrieve details from DB securely
       let partnerDetails = {
