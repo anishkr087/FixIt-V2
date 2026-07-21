@@ -224,32 +224,34 @@ export const HomeScreen = () => {
         </LinearGradient>
 
         <View style={styles.bodyContent}>
-          <View style={styles.activeBookingContainer}>
-            <View style={styles.activeBookingCard}>
-              <View style={styles.activeBookingIconContainer}>
-                <Ionicons name="flash" size={24} color={colors.primary} />
-              </View>
-              <View style={styles.activeBookingDetails}>
-                <Text style={styles.activeBookingLabel}>ACTIVE BOOKING</Text>
-                <Text style={styles.activeBookingTitle}>
-                  {activeBooking ? activeBooking.message : 'Electrician · Today 4:00 PM'}
-                </Text>
-                <View style={styles.activeBookingStatusRow}>
-                  <View style={styles.statusDot} />
-                  <Text style={styles.activeBookingStatusText}>
-                    {activeBooking ? `Status: ${activeBooking.status.replace('_', ' ')}` : 'Rahul is on the way'}
-                  </Text>
+          {activeBooking && activeBooking.status !== 'completed' && activeBooking.status !== 'cancelled' && activeBooking.status !== 'idle' && (
+            <View style={styles.activeBookingContainer}>
+              <View style={styles.activeBookingCard}>
+                <View style={styles.activeBookingIconContainer}>
+                  <Ionicons name="flash" size={24} color={colors.primary} />
                 </View>
+                <View style={styles.activeBookingDetails}>
+                  <Text style={styles.activeBookingLabel}>ACTIVE BOOKING</Text>
+                  <Text style={styles.activeBookingTitle}>
+                    {activeBooking.message || 'Service in progress'}
+                  </Text>
+                  <View style={styles.activeBookingStatusRow}>
+                    <View style={styles.statusDot} />
+                    <Text style={styles.activeBookingStatusText}>
+                      Status: {activeBooking.status ? activeBooking.status.replace('_', ' ').toUpperCase() : 'IN PROGRESS'}
+                    </Text>
+                  </View>
+                </View>
+                <TouchableOpacity
+                  style={styles.trackBtn}
+                  activeOpacity={0.8}
+                  onPress={() => navigation.navigate('Bookings')}
+                >
+                  <Text style={styles.trackBtnText}>Track</Text>
+                </TouchableOpacity>
               </View>
-              <TouchableOpacity
-                style={styles.trackBtn}
-                activeOpacity={0.8}
-                onPress={() => navigation.navigate('Bookings')}
-              >
-                <Text style={styles.trackBtnText}>Track</Text>
-              </TouchableOpacity>
             </View>
-          </View>
+          )}
 
           <ScrollView
             horizontal

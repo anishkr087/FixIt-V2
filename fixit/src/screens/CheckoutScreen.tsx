@@ -18,23 +18,30 @@ import { colors } from '../theme/colors';
 import { useSocketStore } from '../store/useSocketStore';
 import { useBookingStore } from '../store/useBookingStore';
 import { useAuthStore } from '../store/useAuthStore';
+import { AddressModal, AddressData } from '../components/AddressModal';
 
 export const CheckoutScreen = ({ navigation }: any) => {
   const { items, getTotal, clearCart } = useCartStore();
   const [paymentMethod, setPaymentMethod] = useState<'UPI' | 'COD'>('UPI');
-  const [selectedTime, setSelectedTime] = useState('Tomorrow, 10:00 AM');
   
   const [currentLocation, setCurrentLocation] = useState<Location.LocationObject | null>(null);
   const [isLocating, setIsLocating] = useState<boolean>(false);
+  const [autoArea, setAutoArea] = useState<string>('');
 
   const { user, updateProfile } = useAuthStore();
   const { socket, connect } = useSocketStore();
   const { setBooking, setPartnerLocation } = useBookingStore();
 
-  // Door Address state
+  // Address form state
   const [houseNo, setHouseNo] = useState<string>(user?.houseNo || '');
   const [streetAddress, setStreetAddress] = useState<string>(user?.streetAddress || '');
   const [landmark, setLandmark] = useState<string>(user?.landmark || '');
+  const [contactName, setContactName] = useState<string>(user?.name || '');
+  const [contactPhone, setContactPhone] = useState<string>(
+    user?.phone ? user.phone.replace('+91', '') : ''
+  );
+  const [altPhone, setAltPhone] = useState<string>('');
+  const [addressType, setAddressType] = useState<'Home' | 'Work'>('Home');
   const [isAddressModalVisible, setIsAddressModalVisible] = useState<boolean>(false);
   const [savingAddress, setSavingAddress] = useState<boolean>(false);
 
@@ -42,19 +49,16 @@ export const CheckoutScreen = ({ navigation }: any) => {
   const finalTotal = total;
 
   useEffect(() => {
-    // Connect user socket to backend
     connect();
-
-    // Acquire GPS location
     detectLocation();
   }, []);
 
-  // Update local address state if user auth store updates
   useEffect(() => {
     if (user) {
       if (user.houseNo) setHouseNo(user.houseNo);
       if (user.streetAddress) setStreetAddress(user.streetAddress);
       if (user.landmark) setLandmark(user.landmark);
+      if (user.name) setContactName(user.name);
     }
   }, [user]);
 
@@ -63,48 +67,38 @@ export const CheckoutScreen = ({ navigation }: any) => {
     let { status } = await Location.requestForegroundPermissionsAsync();
     if (status !== 'granted') {
       setIsLocating(false);
-      Alert.alert('Permission Required', 'Location permission is required to find nearby partners and deliver service at your door.');
+      Alert.alert('Permission Required', 'Location permission is required to find nearby partners.');
       return;
     }
     try {
       let loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
       setCurrentLocation(loc);
 
-      // Perform reverse geocode if streetAddress is empty
-      if (!streetAddress || !user?.streetAddress) {
-        let addresses = await Location.reverseGeocodeAsync(loc.coords);
-        if (addresses && addresses.length > 0) {
-          const addr = addresses[0];
-          const autoStreet = [addr.name, addr.street, addr.subregion, addr.city].filter(Boolean).join(', ');
-          if (autoStreet && !streetAddress) {
-            setStreetAddress(autoStreet);
-          }
+      // Reverse geocode to fill area
+      let addresses = await Location.reverseGeocodeAsync(loc.coords);
+      if (addresses && addresses.length > 0) {
+        const addr = addresses[0];
+        const area = [addr.name, addr.street, addr.subregion, addr.city, addr.region, addr.postalCode]
+          .filter(Boolean)
+          .join(', ');
+        setAutoArea(area);
+        if (!streetAddress && !user?.streetAddress) {
+          setStreetAddress(area);
         }
       }
     } catch (err) {
-      console.log('Failed to get current location at checkout:', err);
+      console.log('Failed to get location:', err);
     } finally {
       setIsLocating(false);
     }
   };
 
-  // Set up socket listeners for booking updates
   useEffect(() => {
     if (!socket) return;
-
-    const handleBookingUpdate = (data: any) => {
-      console.log('booking_status_update received:', data);
-      setBooking(data);
-    };
-
-    const handlePartnerLocation = (data: any) => {
-      console.log('partner_location_update received:', data);
-      setPartnerLocation({ lat: data.lat, lng: data.lng });
-    };
-
+    const handleBookingUpdate = (data: any) => setBooking(data);
+    const handlePartnerLocation = (data: any) => setPartnerLocation({ lat: data.lat, lng: data.lng });
     socket.on('booking_status_update', handleBookingUpdate);
     socket.on('partner_location_update', handlePartnerLocation);
-
     return () => {
       socket.off('booking_status_update', handleBookingUpdate);
       socket.off('partner_location_update', handlePartnerLocation);
@@ -113,108 +107,101 @@ export const CheckoutScreen = ({ navigation }: any) => {
 
   const handleSaveAddress = async () => {
     if (!houseNo.trim()) {
-      Alert.alert('Address Missing', 'Please enter your Flat / House / Door number.');
+      Alert.alert('Required', 'Please enter your Flat / House / Building name.');
       return;
     }
-    if (!streetAddress.trim()) {
-      Alert.alert('Address Missing', 'Please enter your Street / Area / Building name.');
+    if (!contactName.trim()) {
+      Alert.alert('Required', 'Please enter your full name.');
+      return;
+    }
+    if (!contactPhone.trim() || contactPhone.trim().length < 10) {
+      Alert.alert('Required', 'Please enter a valid 10-digit mobile number.');
       return;
     }
 
-    const fullAddr = `${houseNo.trim()}, ${streetAddress.trim()}${landmark.trim() ? `, Landmark: ${landmark.trim()}` : ''}`;
-    const lat = currentLocation?.coords.latitude || user?.lat || 28.6139;
-    const lng = currentLocation?.coords.longitude || user?.lng || 77.2090;
+    const area = streetAddress.trim() || autoArea;
+    const fullAddr = `${houseNo.trim()}, ${area}${landmark.trim() ? `, ${landmark.trim()}` : ''}`;
+    const lat = currentLocation?.coords.latitude ?? user?.lat ?? 28.6139;
+    const lng = currentLocation?.coords.longitude ?? user?.lng ?? 77.2090;
 
     try {
       setSavingAddress(true);
-      await updateProfile(user?.name, fullAddr, user?.email, {
-        houseNo: houseNo.trim(),
-        streetAddress: streetAddress.trim(),
-        landmark: landmark.trim(),
-        fullAddress: fullAddr,
-        lat,
-        lng
-      });
+      await updateProfile(contactName.trim(), fullAddr, user?.email);
       setIsAddressModalVisible(false);
     } catch (err: any) {
-      Alert.alert('Error Saving Address', err.message || 'Failed to save address to database.');
+      Alert.alert('Error Saving Address', err.message || 'Failed to save address.');
     } finally {
       setSavingAddress(false);
     }
   };
 
+  const handleAddressSaved = (data: AddressData) => {
+    setHouseNo(data.houseNo);
+    setStreetAddress(data.streetAddress);
+    setLandmark(data.landmark);
+    setAddressType(data.addressType);
+  };
+
   const handleConfirm = async () => {
     if (items.length === 0) {
-      Alert.alert("Cart Empty", "Please add some services before confirming.");
+      Alert.alert('Cart Empty', 'Please add some services before confirming.');
       return;
     }
-
     if (!user || !user.phone) {
-      Alert.alert("Authentication Required", "Please log in to confirm booking.");
+      Alert.alert('Authentication Required', 'Please log in to confirm booking.');
       return;
     }
 
-    // Require Door Address
-    if (!houseNo.trim() || !streetAddress.trim()) {
+    const currentHouseNo = user.houseNo || houseNo;
+    const currentStreetAddress = user.streetAddress || streetAddress;
+    const currentLandmark = user.landmark || landmark;
+    const currentLat = user.lat ?? currentLocation?.coords.latitude ?? 25.0113;
+    const currentLng = user.lng ?? currentLocation?.coords.longitude ?? 84.0200;
+
+    if (!currentHouseNo.trim() || !currentStreetAddress.trim()) {
       Alert.alert(
-        "Door Address Required 🏠",
-        "Please provide your full door address (House/Flat No & Street) so our service partner can reach your house.",
-        [{ text: "Enter Address", onPress: () => setIsAddressModalVisible(true) }]
+        'Door Address Required 🏠',
+        'Please select map location & provide your full door address so our partner can reach you.',
+        [{ text: 'Add Address', onPress: () => setIsAddressModalVisible(true) }]
       );
       return;
     }
 
     const category = items[0]?.category || 'Electrician';
     const problemDescription = items.map(item => `${item.name} (${item.quantity}x)`).join(', ');
-    const customerId = user.phone;
-    const customerName = user.name || 'Valued Customer';
+    const fullAddr = user.fullAddress || `${currentHouseNo.trim()}, ${currentStreetAddress.trim()}${currentLandmark.trim() ? `, ${currentLandmark.trim()}` : ''}`;
 
-    const lat = currentLocation?.coords.latitude || user?.lat || 28.6139;
-    const lng = currentLocation?.coords.longitude || user?.lng || 77.2090;
-    const fullAddr = `${houseNo.trim()}, ${streetAddress.trim()}${landmark.trim() ? `, Landmark: ${landmark.trim()}` : ''}`;
-
-    console.log(`Emitting request_job for category ${category} at lat:${lat}, lng:${lng}`);
-    
-    // Set searching status in local booking store
-    setBooking({
-      jobId: 'pending_' + Date.now(),
-      status: 'requesting',
-      message: 'Submitting your request...'
-    });
+    setBooking({ jobId: 'pending_' + Date.now(), status: 'requesting', message: 'Submitting your request...' });
 
     socket?.emit('request_job', {
-      customerId,
-      customerName,
+      customerId: user.phone,
+      customerName: user.name || 'Valued Customer',
       problemDescription,
       category,
       paymentMethod,
       estimatedPrice: finalTotal,
-      lat,
-      lng,
+      lat: currentLat,
+      lng: currentLng,
       fullAddress: fullAddr,
-      houseNo: houseNo.trim(),
-      streetAddress: streetAddress.trim(),
-      landmark: landmark.trim()
+      houseNo: currentHouseNo.trim(),
+      streetAddress: currentStreetAddress.trim(),
+      landmark: currentLandmark.trim(),
+      altPhone: user.altPhone || '',
+      addressType: user.addressType || 'Home'
     });
 
     Alert.alert(
-      "Request Placed! 🛠️",
-      "Finding the nearest service professional. Track updates in your Bookings tab.",
-      [
-        { 
-          text: "Track Booking", 
-          onPress: () => {
-            clearCart();
-            navigation.navigate('MainTabs', { screen: 'Bookings' });
-          } 
-        }
-      ]
+      'Request Placed! 🛠️',
+      'Finding the nearest service professional. Track updates in your Bookings tab.',
+      [{ text: 'Track Booking', onPress: () => { clearCart(); navigation.navigate('MainTabs', { screen: 'Bookings' }); } }]
     );
   };
 
-  const formattedAddressText = houseNo && streetAddress 
-    ? `${houseNo}, ${streetAddress}${landmark ? ` (Landmark: ${landmark})` : ''}`
-    : null;
+  const formattedAddressText = (user?.houseNo || houseNo) && (user?.streetAddress || streetAddress)
+    ? `${user?.houseNo || houseNo}, ${user?.streetAddress || streetAddress}${(user?.landmark || landmark) ? ` (${user?.landmark || landmark})` : ''}`
+    : user?.fullAddress || null;
+
+  const currentAddressType = user?.addressType || addressType;
 
   return (
     <SafeAreaView style={styles.container}>
@@ -227,41 +214,49 @@ export const CheckoutScreen = ({ navigation }: any) => {
       </View>
 
       <ScrollView contentContainerStyle={styles.content}>
-        
-        {/* Door Address & Geolocation Card */}
-        <Text style={styles.sectionTitle}>Door Address & Location 📍</Text>
+
+        {/* Door Address Card */}
+        <Text style={styles.sectionTitle}>Service At 📍</Text>
         <View style={styles.card}>
           <View style={styles.addressHeaderRow}>
-            <Ionicons name="home-outline" size={24} color={colors.primary} />
-            <View style={{ flex: 1, marginLeft: 12 }}>
-              <Text style={styles.addressCardTitle}>Service Delivery Address</Text>
+            <View style={styles.addressIconWrap}>
+              <Ionicons name="location" size={20} color={colors.primary} />
+            </View>
+            <View style={{ flex: 1 }}>
               {formattedAddressText ? (
-                <Text style={styles.addressCardText}>{formattedAddressText}</Text>
+                <>
+                  <Text style={styles.addressCardTitle}>{currentAddressType}</Text>
+                  <Text style={styles.addressCardText}>{formattedAddressText}</Text>
+                </>
               ) : (
-                <Text style={styles.addressCardMissingText}>No door address saved yet. Enter details so partner can reach your house.</Text>
+                <Text style={styles.addressCardMissingText}>
+                  No address saved yet. Add your door address so our partner can find you.
+                </Text>
               )}
             </View>
-            <TouchableOpacity onPress={() => setIsAddressModalVisible(true)} style={styles.editBtn}>
-              <Text style={styles.editBtnText}>{formattedAddressText ? 'Edit' : 'Add'}</Text>
+            <TouchableOpacity onPress={() => setIsAddressModalVisible(true)} style={styles.changeChip}>
+              <Text style={styles.changeChipText}>{formattedAddressText ? 'Change' : 'Add'}</Text>
             </TouchableOpacity>
           </View>
 
-          <View style={styles.gpsRow}>
-            <Ionicons 
-              name={currentLocation ? "location" : "location-outline"} 
-              size={16} 
-              color={currentLocation ? "#16A34A" : colors.textSecondary} 
+          {/* GPS status strip */}
+          <View style={styles.gpsStrip}>
+            <Ionicons
+              name={(user?.lat || currentLocation) ? 'radio-button-on' : 'radio-button-off'}
+              size={14}
+              color={(user?.lat || currentLocation) ? '#16A34A' : colors.textSecondary}
             />
             <Text style={styles.gpsText}>
-              {isLocating 
-                ? 'Detecting precise GPS coordinates...' 
-                : currentLocation 
-                  ? `Precise GPS Active (${currentLocation.coords.latitude.toFixed(4)}, ${currentLocation.coords.longitude.toFixed(4)})` 
-                  : 'GPS location pending (Tap Edit to detect)'}
+              {user?.lat && user?.lng
+                ? `Saved Pin: ${user.lat.toFixed(4)}, ${user.lng.toFixed(4)}`
+                : currentLocation
+                  ? `GPS: ${currentLocation.coords.latitude.toFixed(4)}, ${currentLocation.coords.longitude.toFixed(4)}`
+                  : 'GPS location not selected yet'}
             </Text>
           </View>
         </View>
 
+        {/* Services */}
         <Text style={styles.sectionTitle}>Selected Services</Text>
         <View style={styles.card}>
           {items.map((item) => (
@@ -275,51 +270,34 @@ export const CheckoutScreen = ({ navigation }: any) => {
           ))}
         </View>
 
-        <Text style={styles.sectionTitle}>Date & Time</Text>
-        <View style={styles.card}>
-          <View style={styles.timeRow}>
-            <Ionicons name="calendar-outline" size={20} color={colors.primary} />
-            <Text style={styles.timeText}>{selectedTime}</Text>
-            <TouchableOpacity><Text style={styles.changeBtn}>Change</Text></TouchableOpacity>
-          </View>
-        </View>
-
+        {/* Payment */}
         <Text style={styles.sectionTitle}>Payment Method</Text>
         <View style={styles.card}>
-          <TouchableOpacity 
-            style={styles.paymentRow}
-            onPress={() => setPaymentMethod('UPI')}
-          >
-            <Ionicons 
-              name={paymentMethod === 'UPI' ? 'radio-button-on' : 'radio-button-off'} 
-              size={24} 
-              color={paymentMethod === 'UPI' ? colors.primary : colors.textSecondary} 
-            />
-            <Text style={styles.paymentText}>Pay via UPI (GPay, PhonePe)</Text>
-          </TouchableOpacity>
-          
-          <View style={styles.divider} />
-          
-          <TouchableOpacity 
-            style={styles.paymentRow}
-            onPress={() => setPaymentMethod('COD')}
-          >
-            <Ionicons 
-              name={paymentMethod === 'COD' ? 'radio-button-on' : 'radio-button-off'} 
-              size={24} 
-              color={paymentMethod === 'COD' ? colors.primary : colors.textSecondary} 
-            />
-            <Text style={styles.paymentText}>Pay after Service (Cash)</Text>
-          </TouchableOpacity>
+          {(['UPI', 'COD'] as const).map((method, i) => (
+            <View key={method}>
+              {i > 0 && <View style={styles.divider} />}
+              <TouchableOpacity style={styles.paymentRow} onPress={() => setPaymentMethod(method)}>
+                <Ionicons
+                  name={paymentMethod === method ? 'radio-button-on' : 'radio-button-off'}
+                  size={24}
+                  color={paymentMethod === method ? colors.primary : colors.textSecondary}
+                />
+                <Text style={styles.paymentText}>
+                  {method === 'UPI' ? 'Pay via UPI (GPay, PhonePe)' : 'Pay after Service (Cash)'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          ))}
         </View>
 
+        {/* Bill */}
         <Text style={styles.sectionTitle}>Bill Details</Text>
         <View style={styles.card}>
           <View style={styles.billRow}>
             <Text style={styles.billLabel}>Item Total</Text>
             <Text style={styles.billValue}>₹{total}</Text>
           </View>
-          <View style={[styles.billRow, styles.totalRow, { borderTopWidth: 0, marginTop: 0, paddingTop: 0 }]}>
+          <View style={[styles.billRow, styles.totalRow]}>
             <Text style={styles.totalLabel}>Total to Pay</Text>
             <Text style={styles.totalValue}>₹{finalTotal}</Text>
           </View>
@@ -333,332 +311,140 @@ export const CheckoutScreen = ({ navigation }: any) => {
         </TouchableOpacity>
       </View>
 
-      {/* Door Address Entry Modal */}
-      <Modal
+      {/* 2-Step Address Modal */}
+      <AddressModal
         visible={isAddressModalVisible}
-        animationType="slide"
-        transparent={true}
-        onRequestClose={() => setIsAddressModalVisible(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContainer}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Enter Precise Door Address</Text>
-              <TouchableOpacity onPress={() => setIsAddressModalVisible(false)}>
-                <Ionicons name="close" size={24} color={colors.textPrimary} />
-              </TouchableOpacity>
-            </View>
-
-            <TouchableOpacity style={styles.gpsDetectBtn} onPress={detectLocation} disabled={isLocating}>
-              {isLocating ? (
-                <ActivityIndicator size="small" color="#FFF" />
-              ) : (
-                <>
-                  <Ionicons name="navigate" size={18} color="#FFF" style={{ marginRight: 8 }} />
-                  <Text style={styles.gpsDetectBtnText}>Auto-Detect Current GPS Location</Text>
-                </>
-              )}
-            </TouchableOpacity>
-
-            <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>House / Flat / Floor / Door No. *</Text>
-              <TextInput 
-                style={styles.textInput}
-                placeholder="e.g. Flat 402, 4th Floor, Block B"
-                value={houseNo}
-                onChangeText={setHouseNo}
-              />
-            </View>
-
-            <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Street / Area / Building *</Text>
-              <TextInput 
-                style={styles.textInput}
-                placeholder="e.g. Green Valley Apartments, MG Road"
-                value={streetAddress}
-                onChangeText={setStreetAddress}
-              />
-            </View>
-
-            <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Landmark (Optional)</Text>
-              <TextInput 
-                style={styles.textInput}
-                placeholder="e.g. Near Central Park / Behind City Mall"
-                value={landmark}
-                onChangeText={setLandmark}
-              />
-            </View>
-
-            <TouchableOpacity 
-              style={[styles.saveAddressBtn, savingAddress && { opacity: 0.7 }]} 
-              onPress={handleSaveAddress}
-              disabled={savingAddress}
-            >
-              {savingAddress ? (
-                <ActivityIndicator size="small" color="#FFF" />
-              ) : (
-                <Text style={styles.saveAddressBtnText}>Save Address & Continue</Text>
-              )}
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
+        onClose={() => setIsAddressModalVisible(false)}
+        onSaveSuccess={handleAddressSaved}
+      />
     </SafeAreaView>
   );
 };
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.background,
-  },
+  container: { flex: 1, backgroundColor: colors.background },
   header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: 16,
-    backgroundColor: '#FFF',
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    padding: 16, backgroundColor: '#FFF', borderBottomWidth: 1, borderBottomColor: colors.border,
   },
-  backBtn: {
-    padding: 8,
+  backBtn: { padding: 8 },
+  title: { fontSize: 20, fontWeight: 'bold', color: colors.textPrimary },
+  spacer: { width: 40 },
+  content: { padding: 16, paddingBottom: 40 },
+  sectionTitle: { fontSize: 17, fontWeight: 'bold', color: colors.textPrimary, marginTop: 16, marginBottom: 10 },
+  card: { backgroundColor: '#FFF', borderRadius: 12, padding: 16, borderWidth: 1, borderColor: colors.border },
+
+  // Address card
+  addressHeaderRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
+  addressIconWrap: {
+    width: 36, height: 36, borderRadius: 18, backgroundColor: '#EFF6FF',
+    alignItems: 'center', justifyContent: 'center',
   },
-  title: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: colors.textPrimary,
+  addressCardTitle: { fontSize: 14, fontWeight: '700', color: colors.textPrimary },
+  addressCardText: { fontSize: 13, color: colors.textSecondary, marginTop: 2, lineHeight: 18 },
+  addressCardMissingText: { fontSize: 13, color: '#DC2626' },
+  changeChip: {
+    borderWidth: 1, borderColor: colors.primary, paddingHorizontal: 10,
+    paddingVertical: 4, borderRadius: 6,
   },
-  spacer: {
-    width: 40,
+  changeChipText: { color: colors.primary, fontWeight: '600', fontSize: 13 },
+  gpsStrip: { flexDirection: 'row', alignItems: 'center', marginTop: 12, paddingTop: 10, borderTopWidth: 1, borderTopColor: '#F1F5F9', gap: 6 },
+  gpsText: { fontSize: 11, color: colors.textSecondary },
+
+  // Items / Time / Payment / Bill
+  itemRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
+  itemName: { fontSize: 16, color: colors.textPrimary },
+  itemQty: { fontSize: 12, color: colors.textSecondary, marginTop: 2 },
+  itemPrice: { fontSize: 16, fontWeight: 'bold', color: colors.textPrimary },
+  timeRow: { flexDirection: 'row', alignItems: 'center' },
+  timeText: { flex: 1, fontSize: 15, color: colors.textPrimary, marginLeft: 12 },
+  changeBtn: { color: colors.primary, fontWeight: 'bold' },
+  paymentRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8 },
+  paymentText: { fontSize: 15, marginLeft: 12, color: colors.textPrimary },
+  divider: { height: 1, backgroundColor: colors.border, marginVertical: 8 },
+  billRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 },
+  billLabel: { fontSize: 14, color: colors.textSecondary },
+  billValue: { fontSize: 14, color: colors.textPrimary },
+  totalRow: { marginTop: 8, paddingTop: 10, borderTopWidth: 1, borderTopColor: colors.border },
+  totalLabel: { fontSize: 16, fontWeight: 'bold' },
+  totalValue: { fontSize: 18, fontWeight: 'bold', color: colors.primary },
+
+  footer: { padding: 16, backgroundColor: '#FFF', borderTopWidth: 1, borderTopColor: colors.border },
+  confirmBtn: { backgroundColor: colors.primary, padding: 16, borderRadius: 12, alignItems: 'center' },
+  confirmBtnText: { color: '#FFF', fontSize: 18, fontWeight: 'bold' },
+
+  // ── Modal ──
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
+  modalContainer: {
+    backgroundColor: '#FFF', borderTopLeftRadius: 24, borderTopRightRadius: 24,
+    padding: 20, maxHeight: '92%',
   },
-  content: {
-    padding: 16,
-    paddingBottom: 40,
+  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 },
+  modalTitle: { fontSize: 20, fontWeight: 'bold', color: colors.textPrimary },
+  closeBtn: { padding: 4 },
+
+  infoBanner: {
+    flexDirection: 'row', alignItems: 'flex-start', backgroundColor: '#FFFBEB',
+    borderRadius: 8, padding: 10, marginBottom: 16, gap: 8,
+    borderWidth: 1, borderColor: '#FDE68A',
   },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: colors.textPrimary,
-    marginTop: 16,
-    marginBottom: 12,
-  },
-  card: {
-    backgroundColor: '#FFF',
-    borderRadius: 12,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  addressHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-  },
-  addressCardTitle: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: colors.textPrimary,
-  },
-  addressCardText: {
-    fontSize: 14,
-    color: colors.textPrimary,
-    marginTop: 4,
-    lineHeight: 20,
-  },
-  addressCardMissingText: {
-    fontSize: 13,
-    color: '#DC2626',
-    marginTop: 4,
-  },
-  editBtn: {
-    backgroundColor: '#EFF6FF',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: colors.primary,
-  },
-  editBtnText: {
-    color: colors.primary,
-    fontWeight: 'bold',
-    fontSize: 13,
-  },
-  gpsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 12,
-    paddingTop: 10,
-    borderTopWidth: 1,
-    borderTopColor: '#F1F5F9',
-  },
-  gpsText: {
-    fontSize: 12,
-    color: colors.textSecondary,
-    marginLeft: 6,
-  },
-  itemRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  itemName: {
-    fontSize: 16,
-    color: colors.textPrimary,
-  },
-  itemQty: {
-    fontSize: 12,
-    color: colors.textSecondary,
-    marginTop: 4,
-  },
-  itemPrice: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: colors.textPrimary,
-  },
-  timeRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  timeText: {
-    flex: 1,
-    fontSize: 16,
-    color: colors.textPrimary,
-    marginLeft: 12,
-  },
-  changeBtn: {
-    color: colors.primary,
-    fontWeight: 'bold',
-  },
-  paymentRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 8,
-  },
-  paymentText: {
-    fontSize: 16,
-    marginLeft: 12,
-    color: colors.textPrimary,
-  },
-  divider: {
-    height: 1,
-    backgroundColor: colors.border,
-    marginVertical: 12,
-  },
-  billRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 8,
-  },
-  billLabel: {
-    fontSize: 14,
-    color: colors.textSecondary,
-  },
-  billValue: {
-    fontSize: 14,
-    color: colors.textPrimary,
-  },
-  totalRow: {
-    marginTop: 12,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-  },
-  totalLabel: {
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  totalValue: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: colors.primary,
-  },
-  footer: {
-    padding: 16,
-    backgroundColor: '#FFF',
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-  },
-  confirmBtn: {
-    backgroundColor: colors.primary,
-    padding: 16,
-    borderRadius: 12,
-    alignItems: 'center',
-  },
-  confirmBtnText: {
-    color: '#FFF',
-    fontSize: 18,
-    fontWeight: 'bold',
+  infoBannerText: { flex: 1, fontSize: 13, color: '#92400E', lineHeight: 18 },
+
+  fieldWrap: { marginBottom: 12 },
+  fieldLabel: { fontSize: 12, color: colors.primary, fontWeight: '600', marginBottom: 4 },
+
+  // Flat/House — highlighted blue border
+  flatInput: {
+    borderWidth: 1.5, borderColor: colors.primary, borderRadius: 8,
+    paddingHorizontal: 14, paddingVertical: 12, fontSize: 15,
+    color: colors.textPrimary, backgroundColor: '#FFF',
   },
 
-  // Modal Styles
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'flex-end',
+  // Area card (auto-filled)
+  areaCard: {
+    flexDirection: 'row', alignItems: 'center', backgroundColor: '#F8FAFC',
+    borderRadius: 8, padding: 14, marginBottom: 12,
+    borderWidth: 1, borderColor: colors.border,
   },
-  modalContainer: {
-    backgroundColor: '#FFF',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    padding: 20,
-    maxHeight: '85%',
+  areaCardLabel: { fontSize: 12, color: colors.textSecondary, marginBottom: 4 },
+  areaCardValue: { fontSize: 14, fontWeight: '600', color: colors.textPrimary, lineHeight: 20 },
+  changeAreaBtn: {
+    borderWidth: 1, borderColor: colors.primary, paddingHorizontal: 12,
+    paddingVertical: 6, borderRadius: 6, marginLeft: 8,
   },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 16,
+  changeAreaBtnText: { color: colors.primary, fontWeight: '600', fontSize: 13 },
+
+  // GPS button
+  gpsBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    borderWidth: 1.5, borderColor: colors.primary, borderRadius: 10,
+    paddingVertical: 12, marginBottom: 12,
   },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: colors.textPrimary,
-  },
-  gpsDetectBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#2563EB',
-    padding: 12,
-    borderRadius: 8,
-    marginBottom: 16,
-  },
-  gpsDetectBtnText: {
-    color: '#FFF',
-    fontWeight: 'bold',
-    fontSize: 14,
-  },
-  inputGroup: {
-    marginBottom: 14,
-  },
-  inputLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: colors.textPrimary,
-    marginBottom: 6,
-  },
+  gpsBtnText: { color: colors.primary, fontWeight: '600', fontSize: 14 },
+
+  // Generic text input
   textInput: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 15,
-    color: colors.textPrimary,
-    backgroundColor: '#F8FAFC',
+    borderWidth: 1, borderColor: colors.border, borderRadius: 8,
+    paddingHorizontal: 14, paddingVertical: 12, fontSize: 15,
+    color: colors.textPrimary, backgroundColor: '#FFF',
   },
+
+  // Address type chips
+  typeLabel: { fontSize: 14, color: colors.textPrimary, fontWeight: '600', marginBottom: 10, marginTop: 4 },
+  typeRow: { flexDirection: 'row', gap: 12, marginBottom: 20 },
+  typeChip: {
+    flexDirection: 'row', alignItems: 'center',
+    borderWidth: 1, borderColor: colors.border,
+    paddingHorizontal: 16, paddingVertical: 8,
+    borderRadius: 8, backgroundColor: '#F8FAFC',
+  },
+  typeChipActive: { borderColor: colors.primary, backgroundColor: '#EFF6FF' },
+  typeChipText: { fontSize: 14, color: colors.textSecondary, fontWeight: '500' },
+  typeChipTextActive: { color: colors.primary, fontWeight: '700' },
+
   saveAddressBtn: {
-    backgroundColor: colors.primary,
-    padding: 16,
-    borderRadius: 10,
-    alignItems: 'center',
-    marginTop: 10,
+    backgroundColor: colors.primary, padding: 16, borderRadius: 12,
+    alignItems: 'center', marginBottom: 8,
   },
-  saveAddressBtnText: {
-    color: '#FFF',
-    fontWeight: 'bold',
-    fontSize: 16,
-  }
+  saveAddressBtnText: { color: '#FFF', fontWeight: 'bold', fontSize: 16 },
 });

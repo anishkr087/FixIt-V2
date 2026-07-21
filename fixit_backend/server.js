@@ -203,7 +203,9 @@ io.on('connection', (socket) => {
       fullAddress,
       houseNo,
       streetAddress,
-      landmark
+      landmark,
+      altPhone,
+      addressType
     } = data;
     
     // Authorization Check
@@ -212,7 +214,7 @@ io.on('connection', (socket) => {
       return;
     }
 
-    console.log(`[Job Request] Customer ${customerName} (${customerId}) requested ${category} for ₹${estimatedPrice} [Payment: ${paymentMethod}] - Address: "${fullAddress || 'N/A'}"`);
+    console.log(`[Job Request] Customer ${customerName} (${customerId}) requested ${category} for ₹${estimatedPrice} [Payment: ${paymentMethod}] - Address: "${fullAddress || 'N/A'}" at Lat: ${lat}, Lng: ${lng}`);
 
     const newJob = {
       jobId: 'job_' + Math.random().toString(36).substr(2, 9),
@@ -230,6 +232,8 @@ io.on('connection', (socket) => {
       houseNo: houseNo || '',
       streetAddress: streetAddress || '',
       landmark: landmark || '',
+      altPhone: altPhone || '',
+      addressType: addressType || 'Home',
       createdAt: new Date()
     };
 
@@ -251,7 +255,9 @@ io.on('connection', (socket) => {
           full_address: fullAddress || null,
           house_no: houseNo || null,
           street_address: streetAddress || null,
-          landmark: landmark || null
+          landmark: landmark || null,
+          alternate_phone: altPhone || null,
+          address_type: addressType || null
         })
         .select('*')
         .single();
@@ -269,7 +275,9 @@ io.on('connection', (socket) => {
             street_address: streetAddress || undefined,
             landmark: landmark || undefined,
             location_lat: lat || undefined,
-            location_lng: lng || undefined
+            location_lng: lng || undefined,
+            alternate_phone: altPhone || undefined,
+            address_type: addressType || undefined
           })
           .eq('phone', customerId);
       }

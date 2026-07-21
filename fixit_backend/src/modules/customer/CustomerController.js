@@ -12,7 +12,7 @@ class CustomerController {
   }
 
   async updateProfile(req, res, next) {
-    const { phone, name, location, email, houseNo, streetAddress, landmark, fullAddress, lat, lng } = req.body;
+    const { phone, name, location, email, houseNo, streetAddress, landmark, fullAddress, lat, lng, altPhone, addressType } = req.body;
     try {
       const customer = await customerService.updateCustomerProfile(phone, name, location, email, {
         houseNo,
@@ -20,7 +20,9 @@ class CustomerController {
         landmark,
         fullAddress,
         lat,
-        lng
+        lng,
+        altPhone,
+        addressType
       });
       res.status(200).json({
         success: true,
@@ -34,7 +36,9 @@ class CustomerController {
           landmark: customer.landmark || '',
           fullAddress: customer.fullAddress || '',
           lat: customer.lat || null,
-          lng: customer.lng || null
+          lng: customer.lng || null,
+          altPhone: customer.altPhone || '',
+          addressType: customer.addressType || 'Home'
         }
       });
     } catch (err) {

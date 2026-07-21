@@ -15,6 +15,8 @@ export interface User {
   fullAddress?: string;
   lat?: number | null;
   lng?: number | null;
+  altPhone?: string;
+  addressType?: 'Home' | 'Work';
 }
 
 interface AuthState {
@@ -38,6 +40,8 @@ interface AuthState {
       fullAddress?: string;
       lat?: number | null;
       lng?: number | null;
+      altPhone?: string;
+      addressType?: 'Home' | 'Work';
     }
   ) => Promise<void>;
   showLoginModal: () => void;
@@ -111,6 +115,8 @@ export const useAuthStore = create<AuthState>()(
             fullAddress: addressData?.fullAddress !== undefined ? addressData.fullAddress : user.fullAddress,
             lat: addressData?.lat !== undefined ? addressData.lat : user.lat,
             lng: addressData?.lng !== undefined ? addressData.lng : user.lng,
+            altPhone: addressData?.altPhone !== undefined ? addressData.altPhone : user.altPhone,
+            addressType: addressData?.addressType !== undefined ? addressData.addressType : user.addressType,
           };
 
           const response = await fetch(`${API_URL}/customer/profile`, {

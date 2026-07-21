@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, TextInput, ScrollView, Platform, Alert, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, TextInput, ScrollView, Platform, Alert, ActivityIndicator, Modal } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -9,6 +9,7 @@ import { useAuthStore } from '../store/useAuthStore';
 import { colors } from '../theme/colors';
 import { profileSchema, ProfileFormValues } from '../features/profile/validators/profileSchema';
 import { useProfileMutation } from '../features/profile/api/useProfile';
+import { AddressModal } from '../components/AddressModal';
 
 export const ProfileScreen = () => {
   const insets = useSafeAreaInsets();
@@ -17,6 +18,9 @@ export const ProfileScreen = () => {
 
   const { user, logout, isAuthenticated, showLoginModal } = useAuthStore();
   const [isEditing, setIsEditing] = useState(false);
+  const [isAddressModalVisible, setIsAddressModalVisible] = useState(false);
+  const [isPaymentModalVisible, setIsPaymentModalVisible] = useState(false);
+  const [isLoyaltyModalVisible, setIsLoyaltyModalVisible] = useState(false);
 
   const profileMutation = useProfileMutation();
 
@@ -129,7 +133,7 @@ export const ProfileScreen = () => {
           </View>
 
           {/* Loyalty Status Card */}
-          <View style={styles.loyaltyCard}>
+          <TouchableOpacity style={styles.loyaltyCard} activeOpacity={0.8} onPress={() => setIsLoyaltyModalVisible(true)}>
             <View style={styles.loyaltyIconContainer}>
               <Ionicons name="star" size={22} color="#FFF" />
             </View>
@@ -138,7 +142,8 @@ export const ProfileScreen = () => {
               <Text style={styles.loyaltyTitle}>Gold Member</Text>
               <Text style={styles.loyaltySub}>240 pts to Platinum · Book 2 more services</Text>
             </View>
-          </View>
+            <Ionicons name="chevron-forward" size={18} color="#FFF" />
+          </TouchableOpacity>
 
           {/* Personal Info Header */}
           <View style={styles.infoSectionHeader}>
@@ -233,15 +238,177 @@ export const ProfileScreen = () => {
 
           {/* Action Menu */}
           <View style={styles.secondaryMenu}>
-            <MenuItem icon="location-outline" text="Manage Addresses" />
-            <MenuItem icon="wallet-outline" text="Payment Methods" />
+            <MenuItem icon="location-outline" text="Manage Addresses" onPress={() => setIsAddressModalVisible(true)} />
+            <MenuItem icon="wallet-outline" text="Payment Methods" onPress={() => setIsPaymentModalVisible(true)} />
             <MenuItem icon="log-out-outline" text="Logout" onPress={logout} isLast isDanger />
           </View>
         </View>
       </ScrollView>
+
+      {/* 2-Step Address Modal */}
+      <AddressModal
+        visible={isAddressModalVisible}
+        onClose={() => setIsAddressModalVisible(false)}
+      />
+
+      {/* Payment Methods Modal */}
+      <Modal
+        visible={isPaymentModalVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setIsPaymentModalVisible(false)}
+      >
+        <View style={modalStyles.overlay}>
+          <View style={modalStyles.contentContainer}>
+            <View style={modalStyles.header}>
+              <Text style={modalStyles.headerTitle}>Payment Methods 💳</Text>
+              <TouchableOpacity onPress={() => setIsPaymentModalVisible(false)} style={{ padding: 4 }}>
+                <Ionicons name="close" size={24} color="#0F172A" />
+              </TouchableOpacity>
+            </View>
+            <View style={{ gap: 12, marginVertical: 16 }}>
+              <View style={modalStyles.paymentItem}>
+                <Ionicons name="qr-code-outline" size={24} color="#2563EB" />
+                <View style={{ flex: 1, marginLeft: 12 }}>
+                  <Text style={modalStyles.paymentTitle}>UPI / Online Payment</Text>
+                  <Text style={modalStyles.paymentSub}>Google Pay, PhonePe, Paytm</Text>
+                </View>
+                <Text style={modalStyles.activeTag}>Default</Text>
+              </View>
+              <View style={modalStyles.paymentItem}>
+                <Ionicons name="cash-outline" size={24} color="#16A34A" />
+                <View style={{ flex: 1, marginLeft: 12 }}>
+                  <Text style={modalStyles.paymentTitle}>Cash After Service (COD)</Text>
+                  <Text style={modalStyles.paymentSub}>Pay in person upon completion</Text>
+                </View>
+              </View>
+            </View>
+            <TouchableOpacity style={modalStyles.closeBtn} onPress={() => setIsPaymentModalVisible(false)}>
+              <Text style={modalStyles.closeBtnText}>Done</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Loyalty Status Modal */}
+      <Modal
+        visible={isLoyaltyModalVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setIsLoyaltyModalVisible(false)}
+      >
+        <View style={modalStyles.overlay}>
+          <View style={modalStyles.contentContainer}>
+            <View style={modalStyles.header}>
+              <Text style={modalStyles.headerTitle}>Loyalty Perks ⭐</Text>
+              <TouchableOpacity onPress={() => setIsLoyaltyModalVisible(false)} style={{ padding: 4 }}>
+                <Ionicons name="close" size={24} color="#0F172A" />
+              </TouchableOpacity>
+            </View>
+            <View style={{ gap: 12, marginVertical: 16 }}>
+              <View style={modalStyles.perkItem}>
+                <Ionicons name="gift-outline" size={22} color="#FF5E14" />
+                <Text style={modalStyles.perkText}>10% Extra Discount on electrical & plumbing</Text>
+              </View>
+              <View style={modalStyles.perkItem}>
+                <Ionicons name="flash-outline" size={22} color="#FF5E14" />
+                <Text style={modalStyles.perkText}>Priority Technician Dispatch (within 15 mins)</Text>
+              </View>
+              <View style={modalStyles.perkItem}>
+                <Ionicons name="shield-checkmark-outline" size={22} color="#FF5E14" />
+                <Text style={modalStyles.perkText}>Free 30-Day Service Guarantee</Text>
+              </View>
+            </View>
+            <TouchableOpacity style={modalStyles.closeBtn} onPress={() => setIsLoyaltyModalVisible(false)}>
+              <Text style={modalStyles.closeBtnText}>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 };
+
+const modalStyles = StyleSheet.create({
+  overlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'flex-end',
+  },
+  contentContainer: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 20,
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+  },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  paymentItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    padding: 14,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  paymentTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  paymentSub: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  activeTag: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#2563EB',
+    backgroundColor: '#EFF6FF',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  perkItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFF5F0',
+    padding: 14,
+    borderRadius: 14,
+    gap: 10,
+  },
+  perkText: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#0F172A',
+  },
+  closeBtn: {
+    backgroundColor: '#2563EB',
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  closeBtnText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 15,
+  },
+});
 
 // Generic InfoRow component to condense profile detail lists
 const InfoRow = ({ label, value }: { label: string; value: string }) => (

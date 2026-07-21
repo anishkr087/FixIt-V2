@@ -16,20 +16,44 @@ class CustomerRepository {
   }
 
   async create(customerData) {
+    const fullLoc = customerData.fullAddress || customerData.location || null;
+    const baseData = {
+      phone: customerData.phone,
+      name: customerData.name || null,
+      email: customerData.email || null,
+      location: fullLoc,
+    };
+    
+    // Try full insert with extra columns first
+    try {
+      const { data, error } = await supabase
+        .from('customers')
+        .insert({
+          ...baseData,
+          house_no: customerData.houseNo || null,
+          street_address: customerData.streetAddress || null,
+          landmark: customerData.landmark || null,
+          full_address: customerData.fullAddress || null,
+          location_lat: customerData.lat || null,
+          location_lng: customerData.lng || null,
+          alternate_phone: customerData.altPhone || null,
+          address_type: customerData.addressType || 'Home'
+        })
+        .select('*')
+        .single();
+
+      if (!error) return this._mapCustomer(data);
+      if (!error.message?.includes('column') && !error.message?.includes('schema cache')) {
+        throw error;
+      }
+    } catch (err) {
+      console.warn('[CustomerRepository] Extended columns missing in DB table, using core fields fallback.');
+    }
+
+    // Fallback to core fields if extended columns don't exist in Supabase DB
     const { data, error } = await supabase
       .from('customers')
-      .insert({
-        phone: customerData.phone,
-        name: customerData.name || null,
-        email: customerData.email || null,
-        location: customerData.location || null,
-        house_no: customerData.houseNo || null,
-        street_address: customerData.streetAddress || null,
-        landmark: customerData.landmark || null,
-        full_address: customerData.fullAddress || null,
-        location_lat: customerData.lat || null,
-        location_lng: customerData.lng || null
-      })
+      .insert(baseData)
       .select('*')
       .single();
 
@@ -41,29 +65,45 @@ class CustomerRepository {
   }
 
   async update(phone, updateData) {
-    const dataToUpdate = {};
-    if (updateData.name !== undefined) dataToUpdate.name = updateData.name;
-    if (updateData.email !== undefined) dataToUpdate.email = updateData.email;
-    if (updateData.location !== undefined) dataToUpdate.location = updateData.location;
-    if (updateData.houseNo !== undefined) dataToUpdate.house_no = updateData.houseNo;
-    if (updateData.streetAddress !== undefined) dataToUpdate.street_address = updateData.streetAddress;
-    if (updateData.landmark !== undefined) dataToUpdate.landmark = updateData.landmark;
-    if (updateData.fullAddress !== undefined) dataToUpdate.full_address = updateData.fullAddress;
-    if (updateData.lat !== undefined) dataToUpdate.location_lat = updateData.lat;
-    if (updateData.lng !== undefined) dataToUpdate.location_lng = updateData.lng;
+    const fullLoc = updateData.fullAddress || updateData.location;
+    const baseData = {};
+    if (updateData.name !== undefined) baseData.name = updateData.name;
+    if (updateData.email !== undefined) baseData.email = updateData.email;
+    if (fullLoc !== undefined) baseData.location = fullLoc;
 
-    const { data, error } = await supabase
+    const extendedData = { ...baseData };
+    if (updateData.houseNo !== undefined) extendedData.house_no = updateData.houseNo;
+    if (updateData.streetAddress !== undefined) extendedData.street_address = updateData.streetAddress;
+    if (updateData.landmark !== undefined) extendedData.landmark = updateData.landmark;
+    if (updateData.fullAddress !== undefined) extendedData.full_address = updateData.fullAddress;
+    if (updateData.lat !== undefined) extendedData.location_lat = updateData.lat;
+    if (updateData.lng !== undefined) extendedData.location_lng = updateData.lng;
+    if (updateData.altPhone !== undefined) extendedData.alternate_phone = updateData.altPhone;
+    if (updateData.addressType !== undefined) extendedData.address_type = updateData.addressType;
+
+    // First attempt with extended columns
+    let res = await supabase
       .from('customers')
-      .update(dataToUpdate)
+      .update(extendedData)
       .eq('phone', phone)
       .select('*')
       .single();
 
-    if (error) {
-      console.error('Error updating customer:', error.message);
-      throw error;
+    if (res.error && (res.error.message?.includes('column') || res.error.message?.includes('schema cache'))) {
+      console.warn('[CustomerRepository] Schema error encountered, falling back to core columns update.');
+      res = await supabase
+        .from('customers')
+        .update(baseData)
+        .eq('phone', phone)
+        .select('*')
+        .single();
     }
-    return this._mapCustomer(data);
+
+    if (res.error) {
+      console.error('Error updating customer:', res.error.message);
+      throw res.error;
+    }
+    return this._mapCustomer(res.data);
   }
 
   _mapCustomer(customer) {
@@ -76,6 +116,8 @@ class CustomerRepository {
     customerObj.fullAddress = customer.full_address || customer.location || '';
     customerObj.lat = customer.location_lat ? Number(customer.location_lat) : null;
     customerObj.lng = customer.location_lng ? Number(customer.location_lng) : null;
+    customerObj.altPhone = customer.alternate_phone || '';
+    customerObj.addressType = customer.address_type || 'Home';
     return customerObj;
   }
 }

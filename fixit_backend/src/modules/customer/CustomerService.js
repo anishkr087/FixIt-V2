@@ -32,6 +32,8 @@ class CustomerService {
     if (extraData.fullAddress !== undefined) updateData.fullAddress = extraData.fullAddress;
     if (extraData.lat !== undefined) updateData.lat = extraData.lat;
     if (extraData.lng !== undefined) updateData.lng = extraData.lng;
+    if (extraData.altPhone !== undefined) updateData.altPhone = extraData.altPhone;
+    if (extraData.addressType !== undefined) updateData.addressType = extraData.addressType;
 
     return await customerRepository.update(phone, updateData);
   }

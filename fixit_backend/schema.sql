@@ -12,6 +12,8 @@ CREATE TABLE IF NOT EXISTS customers (
   full_address VARCHAR,
   location_lat NUMERIC DEFAULT 0,
   location_lng NUMERIC DEFAULT 0,
+  alternate_phone VARCHAR,
+  address_type VARCHAR DEFAULT 'Home',
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -56,6 +58,8 @@ CREATE TABLE IF NOT EXISTS job_requests (
   house_no VARCHAR,
   street_address VARCHAR,
   landmark VARCHAR,
+  alternate_phone VARCHAR,
+  address_type VARCHAR,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   completed_at TIMESTAMPTZ
 );

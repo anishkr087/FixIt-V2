@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, KeyboardAvoidingView, Platform, ScrollView, SafeAreaView } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, KeyboardAvoidingView, Platform, ScrollView, SafeAreaView, Alert } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import axios from 'axios';
-import { UserCheck } from 'lucide-react-native';
+import { UserCheck, ArrowLeft } from 'lucide-react-native';
 import { colors } from '../theme/colors';
 import { useAuth, API_URL } from '../context/AuthContext';
 
@@ -29,7 +29,18 @@ export default function ProfileSetupScreen() {
   };
   
   const navigation = useNavigation<NavigationProp>();
-  const { token, updatePartner } = useAuth();
+  const { token, updatePartner, logout } = useAuth();
+
+  const handleBack = () => {
+    Alert.alert(
+      'Change Phone Number',
+      'This will log you out so you can re-enter your phone number. Continue?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Yes, go back', style: 'destructive', onPress: () => logout() },
+      ]
+    );
+  };
 
   const handleContinue = async () => {
     if (name && selectedCategories.length > 0 && experience && serviceArea) {
@@ -63,6 +74,12 @@ export default function ProfileSetupScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
+      {/* Back button row */}
+      <TouchableOpacity style={styles.backButton} onPress={handleBack} activeOpacity={0.7}>
+        <ArrowLeft size={22} color={colors.text} />
+        <Text style={styles.backText}>Change Number</Text>
+      </TouchableOpacity>
+
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
         <ScrollView contentContainerStyle={styles.content}>
           <View style={styles.header}>
@@ -117,6 +134,19 @@ export default function ProfileSetupScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
+  backButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 8,
+    gap: 8,
+  },
+  backText: {
+    fontSize: 15,
+    color: colors.text,
+    fontWeight: '500',
+  },
   content: { padding: 24, paddingBottom: 40 },
   header: { alignItems: 'center', marginBottom: 32, marginTop: 24 },
   iconContainer: {
