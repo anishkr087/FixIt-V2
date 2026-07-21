@@ -10,8 +10,35 @@ import axios from 'axios';
 import { colors } from '../theme/colors';
 import { useAuth, API_URL } from '../context/AuthContext';
 
+let TaskManager: any = null;
+try {
+  TaskManager = require('expo-task-manager');
+} catch (e) {
+  console.warn('expo-task-manager unavailable:', e);
+}
+
 const { width, height } = Dimensions.get('window');
 const SOCKET_URL = process.env.EXPO_PUBLIC_SOCKET_URL || 'https://fixit-v2.onrender.com';
+const BACKGROUND_LOCATION_TASK = 'BACKGROUND_PARTNER_LOCATION_TASK';
+
+if (TaskManager && TaskManager.defineTask) {
+  try {
+    TaskManager.defineTask(BACKGROUND_LOCATION_TASK, ({ data, error }: any) => {
+      if (error) {
+        console.error('[Background Location] Task error:', error);
+        return;
+      }
+      if (data) {
+        const { locations } = data;
+        if (locations && locations.length > 0) {
+          console.log('[Background Location] Active partner position:', locations[0].coords.latitude, locations[0].coords.longitude);
+        }
+      }
+    });
+  } catch (e) {
+    console.log('[Background Location] Task definition check note:', e);
+  }
+}
 
 export default function PartnerHomeScreen({ navigation }: any) {
   const [isOnline, setIsOnline] = useState(false);
@@ -196,18 +223,55 @@ export default function PartnerHomeScreen({ navigation }: any) {
     });
   };
 
-  const handleToggleOnline = () => {
+  const handleToggleOnline = async () => {
     const newStatus = !isOnline;
     setIsOnline(newStatus);
     if (newStatus) {
+      // Request background permissions for continuous tracking
+      try {
+        const { status: bgStatus } = await Location.requestBackgroundPermissionsAsync();
+        if (bgStatus === 'granted') {
+          await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, {
+            accuracy: Location.Accuracy.High,
+            timeInterval: 5000,
+            distanceInterval: 10,
+            showsBackgroundLocationIndicator: true,
+            foregroundService: {
+              notificationTitle: "FixIt Partner Active",
+              notificationBody: "Monitoring nearby service requests in real-time."
+            }
+          });
+        }
+      } catch (err) {
+        console.log('[Background Location] Background permission note:', err);
+      }
+
+      // Re-fetch current location to ensure accuracy before going online
+      let loc = currentLocation;
+      try {
+        loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+        setCurrentLocation(loc);
+      } catch (err) {
+        console.log('Error getting position for go_online:', err);
+      }
+
       socketRef.current?.emit('go_online', { 
         partnerId: partnerInfo?._id,
-        lat: currentLocation?.coords.latitude,
-        lng: currentLocation?.coords.longitude,
+        lat: loc?.coords.latitude,
+        lng: loc?.coords.longitude,
         membershipTier: selectedTier,
         serviceCategory: partnerInfo?.serviceCategory
       });
     } else {
+      try {
+        const hasStarted = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
+        if (hasStarted) {
+          await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
+        }
+      } catch (err) {
+        console.log('Error stopping background location task:', err);
+      }
+
       socketRef.current?.emit('go_offline', { partnerId: partnerInfo?._id });
     }
   };
@@ -434,6 +498,9 @@ export default function PartnerHomeScreen({ navigation }: any) {
           </View>
           <Text style={styles.jobTitle}>{incomingJob.problemDescription}</Text>
           <Text style={styles.jobUser}>Customer: {incomingJob.customerName}</Text>
+          <Text style={[styles.jobUser, { marginTop: 4, fontStyle: 'normal', color: colors.textSecondary }]}>
+            📍 Door Address: {incomingJob.fullAddress || 'Location specified on map'}
+          </Text>
           
           <View style={styles.jobDetailsRow}>
             <View style={styles.jobDetailBox}>
@@ -495,7 +562,7 @@ export default function PartnerHomeScreen({ navigation }: any) {
           
           <Text style={styles.jobUser}>Task: {acceptedJob.problemDescription}</Text>
           <View style={styles.divider} />
-          <Text style={styles.addressText}>Address: Sector 14, Main Road, Block A</Text>
+          <Text style={styles.addressText}>📍 Door Address: {acceptedJob.fullAddress || acceptedJob.doorAddress || 'Customer Door Location'}</Text>
           
           {/* Workflow Action Button */}
           {jobStatus === 'accepted' && (

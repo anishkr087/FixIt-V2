@@ -42,7 +42,8 @@ router.post('/onboard', authMiddleware, async (req, res) => {
     if (!partner) return res.status(404).json({ error: 'Partner not found' });
     res.json(partner);
   } catch (err) {
-    res.status(500).json({ error: 'Failed to update profile' });
+    console.error('Error in /partner/onboard route:', err);
+    res.status(500).json({ error: err.message || 'Failed to update profile' });
   }
 });
 
@@ -64,7 +65,8 @@ router.post('/kyc', authMiddleware, async (req, res) => {
     if (!partner) return res.status(404).json({ error: 'Partner not found' });
     res.json(partner);
   } catch (err) {
-    res.status(500).json({ error: 'Failed to update KYC status' });
+    console.error('Error in /partner/kyc route:', err);
+    res.status(500).json({ error: err.message || 'Failed to update KYC status' });
   }
 });
 

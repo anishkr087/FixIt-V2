@@ -13,7 +13,7 @@ class CustomerService {
     return customer;
   }
 
-  async updateCustomerProfile(phone, name, location, email) {
+  async updateCustomerProfile(phone, name, location, email, extraData = {}) {
     if (!phone) {
       throw new Error('Phone number is required');
     }
@@ -26,6 +26,12 @@ class CustomerService {
     if (name !== undefined) updateData.name = name;
     if (location !== undefined) updateData.location = location;
     if (email !== undefined) updateData.email = email;
+    if (extraData.houseNo !== undefined) updateData.houseNo = extraData.houseNo;
+    if (extraData.streetAddress !== undefined) updateData.streetAddress = extraData.streetAddress;
+    if (extraData.landmark !== undefined) updateData.landmark = extraData.landmark;
+    if (extraData.fullAddress !== undefined) updateData.fullAddress = extraData.fullAddress;
+    if (extraData.lat !== undefined) updateData.lat = extraData.lat;
+    if (extraData.lng !== undefined) updateData.lng = extraData.lng;
 
     return await customerRepository.update(phone, updateData);
   }

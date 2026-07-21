@@ -13,7 +13,12 @@
       "backgroundColor": "#ffffff"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "UIBackgroundModes": ["location"],
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "FixIt Partner uses your background location to receive nearby customer service requests even when the app is minimized.",
+        "NSLocationWhenInUseUsageDescription": "FixIt Partner requires location access to find customer service jobs in your area."
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -22,7 +27,14 @@
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
-      "package": "com.kumar.fixitpartner"
+      "package": "com.kumar.fixitpartner",
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_LOCATION"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"

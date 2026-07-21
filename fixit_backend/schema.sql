@@ -6,6 +6,12 @@ CREATE TABLE IF NOT EXISTS customers (
   name VARCHAR,
   email VARCHAR,
   location VARCHAR,
+  house_no VARCHAR,
+  street_address VARCHAR,
+  landmark VARCHAR,
+  full_address VARCHAR,
+  location_lat NUMERIC DEFAULT 0,
+  location_lng NUMERIC DEFAULT 0,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -46,6 +52,10 @@ CREATE TABLE IF NOT EXISTS job_requests (
   payment_method VARCHAR DEFAULT 'COD',
   customer_location_lat NUMERIC NOT NULL,
   customer_location_lng NUMERIC NOT NULL,
+  full_address VARCHAR,
+  house_no VARCHAR,
+  street_address VARCHAR,
+  landmark VARCHAR,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   completed_at TIMESTAMPTZ
 );

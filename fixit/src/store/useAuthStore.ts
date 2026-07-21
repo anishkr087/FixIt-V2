@@ -4,17 +4,42 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL || 'https://fixit-v2.onrender.com/api';
 
+export interface User {
+  phone: string;
+  name?: string;
+  location?: string;
+  email?: string;
+  houseNo?: string;
+  streetAddress?: string;
+  landmark?: string;
+  fullAddress?: string;
+  lat?: number | null;
+  lng?: number | null;
+}
+
 interface AuthState {
   isAuthenticated: boolean;
   isLoginModalVisible: boolean;
   hasSeenInitialLogin: boolean;
-  user: { name?: string; location?: string; phone: string; email?: string } | null;
+  user: User | null;
   token: string | null;
   login: (phone: string) => Promise<void>;
   verifyOtp: (phone: string, code: string) => Promise<boolean>;
   completeLogin: () => void;
   logout: () => void;
-  updateProfile: (name: string, location: string, email?: string) => Promise<void>;
+  updateProfile: (
+    name?: string,
+    location?: string,
+    email?: string,
+    addressData?: {
+      houseNo?: string;
+      streetAddress?: string;
+      landmark?: string;
+      fullAddress?: string;
+      lat?: number | null;
+      lng?: number | null;
+    }
+  ) => Promise<void>;
   showLoginModal: () => void;
   hideLoginModal: () => void;
   markHasSeenInitialLogin: () => void;
@@ -69,20 +94,33 @@ export const useAuthStore = create<AuthState>()(
         set({ isAuthenticated: true, isLoginModalVisible: false });
       },
       logout: () => set({ isAuthenticated: false, user: null, token: null }),
-      updateProfile: async (name, location, email) => {
+      updateProfile: async (name, location, email, addressData) => {
         const user = get().user;
         if (!user || !user.phone) return;
 
         try {
           console.log(`[Auth API] Saving profile in DB for phone: ${user.phone}`);
+          const payload = {
+            phone: user.phone,
+            name: name !== undefined ? name : user.name,
+            location: location !== undefined ? location : user.location,
+            email: email !== undefined ? email : user.email,
+            houseNo: addressData?.houseNo !== undefined ? addressData.houseNo : user.houseNo,
+            streetAddress: addressData?.streetAddress !== undefined ? addressData.streetAddress : user.streetAddress,
+            landmark: addressData?.landmark !== undefined ? addressData.landmark : user.landmark,
+            fullAddress: addressData?.fullAddress !== undefined ? addressData.fullAddress : user.fullAddress,
+            lat: addressData?.lat !== undefined ? addressData.lat : user.lat,
+            lng: addressData?.lng !== undefined ? addressData.lng : user.lng,
+          };
+
           const response = await fetch(`${API_URL}/customer/profile`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ phone: user.phone, name, location, email })
+            body: JSON.stringify(payload)
           });
           const data = await response.json();
           if (response.ok && data.success && data.user) {
-            set({ user: data.user });
+            set({ user: { ...get().user, ...data.user } });
           } else {
             throw new Error(data.error || 'Failed to update profile on server');
           }

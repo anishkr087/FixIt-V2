@@ -1,5 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
+import { 
+  View, 
+  Text, 
+  StyleSheet, 
+  ScrollView, 
+  TouchableOpacity, 
+  Alert, 
+  Modal, 
+  TextInput, 
+  ActivityIndicator 
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
@@ -15,10 +25,18 @@ export const CheckoutScreen = ({ navigation }: any) => {
   const [selectedTime, setSelectedTime] = useState('Tomorrow, 10:00 AM');
   
   const [currentLocation, setCurrentLocation] = useState<Location.LocationObject | null>(null);
+  const [isLocating, setIsLocating] = useState<boolean>(false);
 
-  const { user } = useAuthStore();
+  const { user, updateProfile } = useAuthStore();
   const { socket, connect } = useSocketStore();
   const { setBooking, setPartnerLocation } = useBookingStore();
+
+  // Door Address state
+  const [houseNo, setHouseNo] = useState<string>(user?.houseNo || '');
+  const [streetAddress, setStreetAddress] = useState<string>(user?.streetAddress || '');
+  const [landmark, setLandmark] = useState<string>(user?.landmark || '');
+  const [isAddressModalVisible, setIsAddressModalVisible] = useState<boolean>(false);
+  const [savingAddress, setSavingAddress] = useState<boolean>(false);
 
   const total = getTotal();
   const finalTotal = total;
@@ -28,20 +46,47 @@ export const CheckoutScreen = ({ navigation }: any) => {
     connect();
 
     // Acquire GPS location
-    (async () => {
-      let { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== 'granted') {
-        console.log('Location permission denied for checkout');
-        return;
-      }
-      try {
-        let loc = await Location.getCurrentPositionAsync({});
-        setCurrentLocation(loc);
-      } catch (err) {
-        console.log('Failed to get current location at checkout:', err);
-      }
-    })();
+    detectLocation();
   }, []);
+
+  // Update local address state if user auth store updates
+  useEffect(() => {
+    if (user) {
+      if (user.houseNo) setHouseNo(user.houseNo);
+      if (user.streetAddress) setStreetAddress(user.streetAddress);
+      if (user.landmark) setLandmark(user.landmark);
+    }
+  }, [user]);
+
+  const detectLocation = async () => {
+    setIsLocating(true);
+    let { status } = await Location.requestForegroundPermissionsAsync();
+    if (status !== 'granted') {
+      setIsLocating(false);
+      Alert.alert('Permission Required', 'Location permission is required to find nearby partners and deliver service at your door.');
+      return;
+    }
+    try {
+      let loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+      setCurrentLocation(loc);
+
+      // Perform reverse geocode if streetAddress is empty
+      if (!streetAddress || !user?.streetAddress) {
+        let addresses = await Location.reverseGeocodeAsync(loc.coords);
+        if (addresses && addresses.length > 0) {
+          const addr = addresses[0];
+          const autoStreet = [addr.name, addr.street, addr.subregion, addr.city].filter(Boolean).join(', ');
+          if (autoStreet && !streetAddress) {
+            setStreetAddress(autoStreet);
+          }
+        }
+      }
+    } catch (err) {
+      console.log('Failed to get current location at checkout:', err);
+    } finally {
+      setIsLocating(false);
+    }
+  };
 
   // Set up socket listeners for booking updates
   useEffect(() => {
@@ -61,13 +106,44 @@ export const CheckoutScreen = ({ navigation }: any) => {
     socket.on('partner_location_update', handlePartnerLocation);
 
     return () => {
-      // Remove ONLY this component's specific handlers, not all listeners
       socket.off('booking_status_update', handleBookingUpdate);
       socket.off('partner_location_update', handlePartnerLocation);
     };
   }, [socket]);
 
-  const handleConfirm = () => {
+  const handleSaveAddress = async () => {
+    if (!houseNo.trim()) {
+      Alert.alert('Address Missing', 'Please enter your Flat / House / Door number.');
+      return;
+    }
+    if (!streetAddress.trim()) {
+      Alert.alert('Address Missing', 'Please enter your Street / Area / Building name.');
+      return;
+    }
+
+    const fullAddr = `${houseNo.trim()}, ${streetAddress.trim()}${landmark.trim() ? `, Landmark: ${landmark.trim()}` : ''}`;
+    const lat = currentLocation?.coords.latitude || user?.lat || 28.6139;
+    const lng = currentLocation?.coords.longitude || user?.lng || 77.2090;
+
+    try {
+      setSavingAddress(true);
+      await updateProfile(user?.name, fullAddr, user?.email, {
+        houseNo: houseNo.trim(),
+        streetAddress: streetAddress.trim(),
+        landmark: landmark.trim(),
+        fullAddress: fullAddr,
+        lat,
+        lng
+      });
+      setIsAddressModalVisible(false);
+    } catch (err: any) {
+      Alert.alert('Error Saving Address', err.message || 'Failed to save address to database.');
+    } finally {
+      setSavingAddress(false);
+    }
+  };
+
+  const handleConfirm = async () => {
     if (items.length === 0) {
       Alert.alert("Cart Empty", "Please add some services before confirming.");
       return;
@@ -78,15 +154,26 @@ export const CheckoutScreen = ({ navigation }: any) => {
       return;
     }
 
+    // Require Door Address
+    if (!houseNo.trim() || !streetAddress.trim()) {
+      Alert.alert(
+        "Door Address Required 🏠",
+        "Please provide your full door address (House/Flat No & Street) so our service partner can reach your house.",
+        [{ text: "Enter Address", onPress: () => setIsAddressModalVisible(true) }]
+      );
+      return;
+    }
+
     const category = items[0]?.category || 'Electrician';
     const problemDescription = items.map(item => `${item.name} (${item.quantity}x)`).join(', ');
     const customerId = user.phone;
     const customerName = user.name || 'Valued Customer';
 
-    const lat = currentLocation?.coords.latitude || 28.6139;
-    const lng = currentLocation?.coords.longitude || 77.2090;
+    const lat = currentLocation?.coords.latitude || user?.lat || 28.6139;
+    const lng = currentLocation?.coords.longitude || user?.lng || 77.2090;
+    const fullAddr = `${houseNo.trim()}, ${streetAddress.trim()}${landmark.trim() ? `, Landmark: ${landmark.trim()}` : ''}`;
 
-    console.log(`Emitting request_job for category ${category}`);
+    console.log(`Emitting request_job for category ${category} at lat:${lat}, lng:${lng}`);
     
     // Set searching status in local booking store
     setBooking({
@@ -103,7 +190,11 @@ export const CheckoutScreen = ({ navigation }: any) => {
       paymentMethod,
       estimatedPrice: finalTotal,
       lat,
-      lng
+      lng,
+      fullAddress: fullAddr,
+      houseNo: houseNo.trim(),
+      streetAddress: streetAddress.trim(),
+      landmark: landmark.trim()
     });
 
     Alert.alert(
@@ -114,13 +205,16 @@ export const CheckoutScreen = ({ navigation }: any) => {
           text: "Track Booking", 
           onPress: () => {
             clearCart();
-            // Navigate to Bookings screen in MainTabs
             navigation.navigate('MainTabs', { screen: 'Bookings' });
           } 
         }
       ]
     );
   };
+
+  const formattedAddressText = houseNo && streetAddress 
+    ? `${houseNo}, ${streetAddress}${landmark ? ` (Landmark: ${landmark})` : ''}`
+    : null;
 
   return (
     <SafeAreaView style={styles.container}>
@@ -134,6 +228,40 @@ export const CheckoutScreen = ({ navigation }: any) => {
 
       <ScrollView contentContainerStyle={styles.content}>
         
+        {/* Door Address & Geolocation Card */}
+        <Text style={styles.sectionTitle}>Door Address & Location 📍</Text>
+        <View style={styles.card}>
+          <View style={styles.addressHeaderRow}>
+            <Ionicons name="home-outline" size={24} color={colors.primary} />
+            <View style={{ flex: 1, marginLeft: 12 }}>
+              <Text style={styles.addressCardTitle}>Service Delivery Address</Text>
+              {formattedAddressText ? (
+                <Text style={styles.addressCardText}>{formattedAddressText}</Text>
+              ) : (
+                <Text style={styles.addressCardMissingText}>No door address saved yet. Enter details so partner can reach your house.</Text>
+              )}
+            </View>
+            <TouchableOpacity onPress={() => setIsAddressModalVisible(true)} style={styles.editBtn}>
+              <Text style={styles.editBtnText}>{formattedAddressText ? 'Edit' : 'Add'}</Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.gpsRow}>
+            <Ionicons 
+              name={currentLocation ? "location" : "location-outline"} 
+              size={16} 
+              color={currentLocation ? "#16A34A" : colors.textSecondary} 
+            />
+            <Text style={styles.gpsText}>
+              {isLocating 
+                ? 'Detecting precise GPS coordinates...' 
+                : currentLocation 
+                  ? `Precise GPS Active (${currentLocation.coords.latitude.toFixed(4)}, ${currentLocation.coords.longitude.toFixed(4)})` 
+                  : 'GPS location pending (Tap Edit to detect)'}
+            </Text>
+          </View>
+        </View>
+
         <Text style={styles.sectionTitle}>Selected Services</Text>
         <View style={styles.card}>
           {items.map((item) => (
@@ -204,6 +332,78 @@ export const CheckoutScreen = ({ navigation }: any) => {
           <Text style={styles.confirmBtnText}>Confirm Booking</Text>
         </TouchableOpacity>
       </View>
+
+      {/* Door Address Entry Modal */}
+      <Modal
+        visible={isAddressModalVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setIsAddressModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContainer}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Enter Precise Door Address</Text>
+              <TouchableOpacity onPress={() => setIsAddressModalVisible(false)}>
+                <Ionicons name="close" size={24} color={colors.textPrimary} />
+              </TouchableOpacity>
+            </View>
+
+            <TouchableOpacity style={styles.gpsDetectBtn} onPress={detectLocation} disabled={isLocating}>
+              {isLocating ? (
+                <ActivityIndicator size="small" color="#FFF" />
+              ) : (
+                <>
+                  <Ionicons name="navigate" size={18} color="#FFF" style={{ marginRight: 8 }} />
+                  <Text style={styles.gpsDetectBtnText}>Auto-Detect Current GPS Location</Text>
+                </>
+              )}
+            </TouchableOpacity>
+
+            <View style={styles.inputGroup}>
+              <Text style={styles.inputLabel}>House / Flat / Floor / Door No. *</Text>
+              <TextInput 
+                style={styles.textInput}
+                placeholder="e.g. Flat 402, 4th Floor, Block B"
+                value={houseNo}
+                onChangeText={setHouseNo}
+              />
+            </View>
+
+            <View style={styles.inputGroup}>
+              <Text style={styles.inputLabel}>Street / Area / Building *</Text>
+              <TextInput 
+                style={styles.textInput}
+                placeholder="e.g. Green Valley Apartments, MG Road"
+                value={streetAddress}
+                onChangeText={setStreetAddress}
+              />
+            </View>
+
+            <View style={styles.inputGroup}>
+              <Text style={styles.inputLabel}>Landmark (Optional)</Text>
+              <TextInput 
+                style={styles.textInput}
+                placeholder="e.g. Near Central Park / Behind City Mall"
+                value={landmark}
+                onChangeText={setLandmark}
+              />
+            </View>
+
+            <TouchableOpacity 
+              style={[styles.saveAddressBtn, savingAddress && { opacity: 0.7 }]} 
+              onPress={handleSaveAddress}
+              disabled={savingAddress}
+            >
+              {savingAddress ? (
+                <ActivityIndicator size="small" color="#FFF" />
+              ) : (
+                <Text style={styles.saveAddressBtnText}>Save Address & Continue</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 };
@@ -250,6 +450,52 @@ const styles = StyleSheet.create({
     padding: 16,
     borderWidth: 1,
     borderColor: colors.border,
+  },
+  addressHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+  },
+  addressCardTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: colors.textPrimary,
+  },
+  addressCardText: {
+    fontSize: 14,
+    color: colors.textPrimary,
+    marginTop: 4,
+    lineHeight: 20,
+  },
+  addressCardMissingText: {
+    fontSize: 13,
+    color: '#DC2626',
+    marginTop: 4,
+  },
+  editBtn: {
+    backgroundColor: '#EFF6FF',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: colors.primary,
+  },
+  editBtnText: {
+    color: colors.primary,
+    fontWeight: 'bold',
+    fontSize: 13,
+  },
+  gpsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 12,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+  },
+  gpsText: {
+    fontSize: 12,
+    color: colors.textSecondary,
+    marginLeft: 6,
   },
   itemRow: {
     flexDirection: 'row',
@@ -344,5 +590,75 @@ const styles = StyleSheet.create({
     color: '#FFF',
     fontSize: 18,
     fontWeight: 'bold',
+  },
+
+  // Modal Styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalContainer: {
+    backgroundColor: '#FFF',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 20,
+    maxHeight: '85%',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: colors.textPrimary,
+  },
+  gpsDetectBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#2563EB',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 16,
+  },
+  gpsDetectBtnText: {
+    color: '#FFF',
+    fontWeight: 'bold',
+    fontSize: 14,
+  },
+  inputGroup: {
+    marginBottom: 14,
+  },
+  inputLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.textPrimary,
+    marginBottom: 6,
+  },
+  textInput: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 15,
+    color: colors.textPrimary,
+    backgroundColor: '#F8FAFC',
+  },
+  saveAddressBtn: {
+    backgroundColor: colors.primary,
+    padding: 16,
+    borderRadius: 10,
+    alignItems: 'center',
+    marginTop: 10,
+  },
+  saveAddressBtnText: {
+    color: '#FFF',
+    fontWeight: 'bold',
+    fontSize: 16,
   }
 });

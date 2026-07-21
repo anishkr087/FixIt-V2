@@ -120,15 +120,39 @@ const updatePartnerById = async (id, updateData) => {
     dataToUpdate.location_lat = updateData.location.coordinates[1];
   }
 
-  const { data, error } = await supabase
+  // Check if partner exists before updating
+  const { data: existingPartner } = await supabase
     .from('partners')
-    .update(dataToUpdate)
+    .select('phone')
     .eq('phone', id)
-    .select('*')
-    .single();
+    .maybeSingle();
+
+  let data, error;
+  if (!existingPartner) {
+    console.log(`[DB Helper] Partner ${id} not found in DB. Creating new partner record...`);
+    const insertRes = await supabase
+      .from('partners')
+      .insert({
+        phone: id,
+        ...dataToUpdate
+      })
+      .select('*')
+      .single();
+    data = insertRes.data;
+    error = insertRes.error;
+  } else {
+    const updateRes = await supabase
+      .from('partners')
+      .update(dataToUpdate)
+      .eq('phone', id)
+      .select('*')
+      .single();
+    data = updateRes.data;
+    error = updateRes.error;
+  }
 
   if (error) {
-    console.error('Error updating partner by id:', error.message);
+    console.error('Error updating or creating partner by id:', error.message);
     throw error;
   }
   return decryptPartnerData(data);

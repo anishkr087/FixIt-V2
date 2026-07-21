@@ -12,16 +12,29 @@ class CustomerController {
   }
 
   async updateProfile(req, res, next) {
-    const { phone, name, location, email } = req.body;
+    const { phone, name, location, email, houseNo, streetAddress, landmark, fullAddress, lat, lng } = req.body;
     try {
-      const customer = await customerService.updateCustomerProfile(phone, name, location, email);
+      const customer = await customerService.updateCustomerProfile(phone, name, location, email, {
+        houseNo,
+        streetAddress,
+        landmark,
+        fullAddress,
+        lat,
+        lng
+      });
       res.status(200).json({
         success: true,
         user: {
           phone: customer.phone,
           name: customer.name || '',
           email: customer.email || '',
-          location: customer.location || ''
+          location: customer.location || '',
+          houseNo: customer.houseNo || '',
+          streetAddress: customer.streetAddress || '',
+          landmark: customer.landmark || '',
+          fullAddress: customer.fullAddress || '',
+          lat: customer.lat || null,
+          lng: customer.lng || null
         }
       });
     } catch (err) {

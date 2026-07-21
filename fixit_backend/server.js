@@ -191,7 +191,20 @@ io.on('connection', (socket) => {
 
   // Client requests a service professional
   socket.on('request_job', async (data) => {
-    const { customerId, customerName, problemDescription, category, paymentMethod = 'COD', estimatedPrice, lat, lng } = data;
+    const { 
+      customerId, 
+      customerName, 
+      problemDescription, 
+      category, 
+      paymentMethod = 'COD', 
+      estimatedPrice, 
+      lat, 
+      lng,
+      fullAddress,
+      houseNo,
+      streetAddress,
+      landmark
+    } = data;
     
     // Authorization Check
     if (socket.userType !== 'customer' || socket.userId !== customerId) {
@@ -199,7 +212,7 @@ io.on('connection', (socket) => {
       return;
     }
 
-    console.log(`[Job Request] Customer ${customerName} (${customerId}) requested ${category} for ₹${estimatedPrice} [Payment: ${paymentMethod}] - "${problemDescription}"`);
+    console.log(`[Job Request] Customer ${customerName} (${customerId}) requested ${category} for ₹${estimatedPrice} [Payment: ${paymentMethod}] - Address: "${fullAddress || 'N/A'}"`);
 
     const newJob = {
       jobId: 'job_' + Math.random().toString(36).substr(2, 9),
@@ -213,6 +226,10 @@ io.on('connection', (socket) => {
       assignedPartner: null,
       lat,
       lng,
+      fullAddress: fullAddress || '',
+      houseNo: houseNo || '',
+      streetAddress: streetAddress || '',
+      landmark: landmark || '',
       createdAt: new Date()
     };
 
@@ -230,13 +247,33 @@ io.on('connection', (socket) => {
           payment_method: paymentMethod,
           status: 'pending',
           customer_location_lat: lat,
-          customer_location_lng: lng
+          customer_location_lng: lng,
+          full_address: fullAddress || null,
+          house_no: houseNo || null,
+          street_address: streetAddress || null,
+          landmark: landmark || null
         })
         .select('*')
         .single();
 
       if (dbError) throw dbError;
       
+      // Update customer profile with default location and address if provided
+      if (fullAddress || lat || lng) {
+        await supabase
+          .from('customers')
+          .update({
+            location: fullAddress || undefined,
+            full_address: fullAddress || undefined,
+            house_no: houseNo || undefined,
+            street_address: streetAddress || undefined,
+            landmark: landmark || undefined,
+            location_lat: lat || undefined,
+            location_lng: lng || undefined
+          })
+          .eq('phone', customerId);
+      }
+
       // Re-key in-memory registry with real UUID ID
       const tempJobId = newJob.jobId; // preserve temp key before overwriting
       newJob.jobId = savedJob.id;
@@ -244,7 +281,7 @@ io.on('connection', (socket) => {
       delete activeJobs[tempJobId]; // delete the old temp key, not the new one
       console.log(`JobRequest persisted in Supabase with ID: ${savedJob.id}`);
     } catch (err) {
-      console.error('Failed to persist JobRequest to MongoDB:', err);
+      console.error('Failed to persist JobRequest to database:', err);
       socket.emit('booking_status_update', {
         status: 'error',
         message: 'Could not create booking request due to database failure.'
@@ -302,7 +339,11 @@ io.on('connection', (socket) => {
         estimatedPrice,
         distance: parseFloat(closestPartner.distance.toFixed(1)),
         lat,
-        lng
+        lng,
+        fullAddress: fullAddress || '',
+        houseNo: houseNo || '',
+        streetAddress: streetAddress || '',
+        landmark: landmark || ''
       });
 
       socket.emit('booking_status_update', {

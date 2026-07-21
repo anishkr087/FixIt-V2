@@ -49,8 +49,10 @@ export default function ProfileSetupScreen() {
         
         // Move to document upload
         navigation.navigate('DocumentUpload');
-      } catch (err) {
-        alert('Failed to save profile');
+      } catch (err: any) {
+        console.error('Profile setup error:', err);
+        const errorMsg = err.response?.data?.error || err.message || 'Failed to save profile';
+        alert(`Failed to save profile: ${errorMsg}`);
       } finally {
         setLoading(false);
       }
