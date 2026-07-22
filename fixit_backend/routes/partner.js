@@ -1,6 +1,7 @@
 const express = require('express');
 const jwt = require('jsonwebtoken');
 const dbHelper = require('../db_helper');
+const supabase = require('../src/config/supabase');
 
 const router = express.Router();
 
@@ -186,6 +187,36 @@ router.post('/clear-dues', authMiddleware, async (req, res) => {
   } catch (err) {
     console.error('Failed to clear dues:', err);
     res.status(500).json({ error: 'Failed to process payment' });
+  }
+});
+
+// Get partner job history from DB
+router.get('/jobs', authMiddleware, async (req, res) => {
+  try {
+    const { data: jobs, error } = await supabase
+      .from('job_requests')
+      .select('*, customers(name)')
+      .eq('assigned_partner', req.partnerId)
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+
+    const formattedJobs = (jobs || []).map(j => ({
+      id: j.id,
+      customerName: j.customers?.name || 'Valued Customer',
+      problemDescription: j.problem_description,
+      amount: j.estimated_price,
+      date: new Date(j.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }),
+      time: new Date(j.created_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }),
+      address: j.full_address || `${j.house_no}, ${j.street_address}`,
+      paymentMethod: j.payment_method,
+      status: j.status
+    }));
+
+    res.json({ success: true, history: formattedJobs });
+  } catch (err) {
+    console.error('Failed to get partner jobs:', err);
+    res.status(500).json({ error: 'Failed to fetch job history' });
   }
 });
 

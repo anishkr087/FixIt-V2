@@ -8,11 +8,12 @@ import OtpScreen from '../screens/OtpScreen';
 import ProfileSetupScreen from '../screens/ProfileSetupScreen';
 import AadhaarScreen from '../screens/AadhaarScreen';
 import PartnerHomeScreen from '../screens/PartnerHomeScreen';
+import HistoryScreen from '../screens/HistoryScreen';
 import EarningsScreen from '../screens/EarningsScreen';
 import ProfileScreen from '../screens/ProfileScreen';
 import { useAuth } from '../context/AuthContext';
 import { ActivityIndicator, View } from 'react-native';
-import { MapPin, Wallet, User } from 'lucide-react-native';
+import { MapPin, History, Wallet, User } from 'lucide-react-native';
 import { colors } from '../theme/colors';
 
 const AuthStack = createNativeStackNavigator();
@@ -29,8 +30,6 @@ export default function AppNavigator() {
       </View>
     );
   }
-
-
 
   return (
     <NavigationContainer>
@@ -60,12 +59,14 @@ export default function AppNavigator() {
             },
             tabBarIcon: ({ color, size }) => {
               if (route.name === 'Home') return <MapPin size={size} color={color} />;
+              if (route.name === 'History') return <History size={size} color={color} />;
               if (route.name === 'Earnings') return <Wallet size={size} color={color} />;
               if (route.name === 'Profile') return <User size={size} color={color} />;
             },
           })}
         >
           <Tab.Screen name="Home" component={PartnerHomeScreen} initialParams={{ onLogout: logout }} />
+          <Tab.Screen name="History" component={HistoryScreen} />
           <Tab.Screen name="Earnings" component={EarningsScreen} />
           <Tab.Screen name="Profile" component={ProfileScreen} />
         </Tab.Navigator>

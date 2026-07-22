@@ -1,4 +1,5 @@
 const customerService = require('./CustomerService');
+const supabase = require('../../config/supabase');
 
 class CustomerController {
   async getOrCreate(req, res, next) {
@@ -51,6 +52,32 @@ class CustomerController {
     try {
       const bookings = await customerService.getCustomerBookings(phone);
       res.status(200).json({ success: true, bookings });
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  async getPartners(req, res, next) {
+    try {
+      const { data: partners, error } = await supabase
+        .from('partners')
+        .select('name, service_category, rating, jobs_completed, experience, phone')
+        .limit(10);
+        
+      if (error) throw error;
+      
+      const formatted = (partners || []).map(p => ({
+        id: p.phone,
+        name: p.name || 'Service Pro',
+        role: p.service_category || 'Professional',
+        rating: Number(p.rating) || 5.0,
+        jobs: p.jobs_completed || 0,
+        experience: p.experience || 0,
+        initials: p.name ? p.name.split(' ').map(w => w[0]).join('').toUpperCase() : 'SP',
+        color: '#FF5E14'
+      }));
+      
+      res.status(200).json({ success: true, partners: formatted });
     } catch (err) {
       next(err);
     }

@@ -5,6 +5,8 @@ export interface BookingState {
     jobId: string;
     status: string;
     message: string;
+    lat?: number;
+    lng?: number;
     partner?: {
       name: string;
       phone: string;

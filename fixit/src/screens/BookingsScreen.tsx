@@ -141,8 +141,8 @@ export const BookingsScreen = () => {
             <MapView
               style={styles.liveMap}
               region={{
-                latitude: currentLocation?.coords.latitude || pLocation?.lat || 28.6139,
-                longitude: currentLocation?.coords.longitude || pLocation?.lng || 77.2090,
+                latitude: activeBooking?.lat || user?.lat || currentLocation?.coords.latitude || pLocation?.lat || 28.6139,
+                longitude: activeBooking?.lng || user?.lng || currentLocation?.coords.longitude || pLocation?.lng || 77.2090,
                 latitudeDelta: 0.02,
                 longitudeDelta: 0.02,
               }}
@@ -150,13 +150,13 @@ export const BookingsScreen = () => {
               zoomEnabled={true}
             >
               {/* Customer Marker */}
-              {currentLocation && (
+              {(activeBooking?.lat || user?.lat || currentLocation) && (
                 <Marker
                   coordinate={{
-                    latitude: currentLocation.coords.latitude,
-                    longitude: currentLocation.coords.longitude
+                    latitude: activeBooking?.lat || user?.lat || (currentLocation ? currentLocation.coords.latitude : 25.0113),
+                    longitude: activeBooking?.lng || user?.lng || (currentLocation ? currentLocation.coords.longitude : 84.0200)
                   }}
-                  title="Your Location"
+                  title="Doorstep / Home"
                 >
                   <View style={styles.customerMarker}>
                     <View style={styles.customerMarkerInner} />
@@ -180,10 +180,13 @@ export const BookingsScreen = () => {
               )}
 
               {/* Route Polyline connecting Customer and Partner */}
-              {currentLocation && pLocation && (
+              {(activeBooking?.lat || user?.lat || currentLocation) && pLocation && (
                 <Polyline
                   coordinates={[
-                    { latitude: currentLocation.coords.latitude, longitude: currentLocation.coords.longitude },
+                    { 
+                      latitude: activeBooking?.lat || user?.lat || (currentLocation ? currentLocation.coords.latitude : 25.0113), 
+                      longitude: activeBooking?.lng || user?.lng || (currentLocation ? currentLocation.coords.longitude : 84.0200)
+                    },
                     { latitude: pLocation.lat, longitude: pLocation.lng }
                   ]}
                   strokeColor={colors.primary}
@@ -275,12 +278,11 @@ export const BookingsScreen = () => {
         )}
 
         {status === 'completed' && (
-          <TouchableOpacity
-            style={styles.completeBtn}
-            onPress={clearBooking}
-          >
-            <Text style={styles.completeBtnText}>Dismiss & Clear</Text>
-          </TouchableOpacity>
+          <View style={styles.completedSuccessCard}>
+            <Ionicons name="checkmark-circle" size={44} color={colors.success} style={{ marginBottom: 6 }} />
+            <Text style={styles.completedSuccessTitle}>Service Completed! ✅</Text>
+            <Text style={styles.completedSuccessSub}>Your service request has been successfully fulfilled.</Text>
+          </View>
         )}
 
         {status === 'no_partners' && (
@@ -588,5 +590,26 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: colors.textSecondary,
     fontWeight: '600',
+  },
+  completedSuccessCard: {
+    backgroundColor: '#F0FDF4',
+    borderRadius: 16,
+    padding: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#86EFAC',
+    marginTop: 8,
+  },
+  completedSuccessTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: '#166534',
+    marginBottom: 4,
+  },
+  completedSuccessSub: {
+    fontSize: 13,
+    color: '#15803D',
+    textAlign: 'center',
   },
 });

@@ -670,13 +670,16 @@ io.on('connection', (socket) => {
         return;
       }
 
+      const selectedPaymentMethod = data.paymentMethod || 'COD';
       job.status = 'completed';
+      job.paymentMethod = selectedPaymentMethod;
 
       try {
         const { error: updateError } = await supabase
           .from('job_requests')
           .update({ 
             status: 'completed',
+            payment_method: selectedPaymentMethod,
             completed_at: new Date()
           })
           .eq('id', jobId);

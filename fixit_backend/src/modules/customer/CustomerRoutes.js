@@ -18,5 +18,6 @@ const validatePhone = (req, res, next) => {
 
 router.post('/profile', validatePhone, customerController.updateProfile);
 router.get('/bookings/:phone', validatePhone, customerController.getBookings);
+router.get('/partners', customerController.getPartners);
 
 module.exports = router;

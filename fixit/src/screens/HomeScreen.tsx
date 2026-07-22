@@ -10,6 +10,7 @@ import { useCartStore } from '../store/useCartStore';
 import { useBookingStore } from '../store/useBookingStore';
 import { useSocketStore } from '../store/useSocketStore';
 import { useNotificationStore } from '../store/useNotificationStore';
+import { apiClient } from '../api/apiClient';
 
 const { width } = Dimensions.get('window');
 
@@ -90,15 +91,10 @@ const SERVICES_DATA = [
   },
 ];
 
-const TOP_PROS = [
-  { id: 'p1', name: 'Rahul Sharma', role: 'Electrician', rating: 4.9, jobs: 312, initials: 'RS', color: '#FF5E14' },
-  { id: 'p2', name: 'Vikram Singh', role: 'Carpenter', rating: 4.9, jobs: 198, initials: 'VS', color: '#8B5CF6' },
-  { id: 'p3', name: 'Suresh Kumar', role: 'AC Tech', rating: 4.8, jobs: 245, initials: 'SK', color: '#06B6D4' },
-  { id: 'p4', name: 'Amit Mishra', role: 'Plumber', rating: 4.7, jobs: 187, initials: 'AM', color: '#10B981' },
-];
+
 
 export const HomeScreen = () => {
-  const { user } = useAuthStore();
+  const { user, updateGeneralLocation } = useAuthStore();
   const { activeBooking } = useBookingStore();
   const navigation = useNavigation<any>();
   const [selectedCategory, setSelectedCategory] = useState('All');
@@ -111,7 +107,39 @@ export const HomeScreen = () => {
   const { notifications, markAsRead, markAllAsRead, clearAll, addNotification, getUnreadCount } = useNotificationStore();
   const { socket, connect } = useSocketStore();
   const [showNotifications, setShowNotifications] = useState(false);
+  const [isLocationModalVisible, setIsLocationModalVisible] = useState(false);
+  const [tempLocation, setTempLocation] = useState(user?.location || 'Bandra West, Mumbai');
+  const [topPros, setTopPros] = useState<any[]>([]);
   const unreadCount = getUnreadCount();
+
+  useEffect(() => {
+    apiClient.get('/customer/partners')
+      .then(res => {
+        if (res.data?.success && res.data.partners) {
+          setTopPros(res.data.partners);
+        }
+      })
+      .catch(err => console.log('Error fetching top pros:', err));
+  }, []);
+
+  useEffect(() => {
+    if (user?.location) {
+      setTempLocation(user.location);
+    }
+  }, [user?.location]);
+
+  const handleSaveLocation = async () => {
+    if (!tempLocation.trim()) {
+      Alert.alert('Error', 'Please enter a location');
+      return;
+    }
+    try {
+      await updateGeneralLocation(tempLocation);
+      setIsLocationModalVisible(false);
+    } catch (err: any) {
+      Alert.alert('Error', err.message || 'Failed to update location');
+    }
+  };
 
   const insets = useSafeAreaInsets();
   const bottomPadding = insets.bottom > 0 ? insets.bottom : 12;
@@ -184,16 +212,21 @@ export const HomeScreen = () => {
         >
           <SafeAreaView edges={['top']} style={styles.headerSafeArea}>
             <View style={styles.headerTop}>
-              <View>
+              <View style={{ flex: 1, marginRight: 16 }}>
                 <Text style={styles.greeting}>{getGreeting()}</Text>
                 <Text style={styles.headerTitleText}>Find Home Experts</Text>
                 <TouchableOpacity 
                   style={styles.locationContainer}
                   activeOpacity={0.7}
-                  onPress={() => Alert.alert("Location", `Current: ${user?.location || 'Bandra West, Mumbai'}\n\nAddress management is coming soon!`)}
+                  onPress={() => {
+                    setTempLocation(user?.location || 'Bandra West, Mumbai');
+                    setIsLocationModalVisible(true);
+                  }}
                 >
                   <Ionicons name="location-sharp" size={14} color="#FFF" />
-                  <Text style={styles.locationText}>{user?.location || 'Bandra West, Mumbai'}</Text>
+                  <Text style={styles.locationText} numberOfLines={1} ellipsizeMode="tail">
+                    {user?.location || 'Bandra West, Mumbai'}
+                  </Text>
                 </TouchableOpacity>
               </View>
               <TouchableOpacity 
@@ -319,8 +352,15 @@ export const HomeScreen = () => {
             style={styles.prosScroll}
             contentContainerStyle={styles.prosScrollContent}
           >
-            {TOP_PROS.map((pro) => (
-              <View key={pro.id} style={styles.proCard}>
+            {topPros.length === 0 ? (
+              <View style={{ paddingVertical: 20, paddingHorizontal: 4, width: width - 48 }}>
+                <Text style={{ fontSize: 13, color: colors.textSecondary, fontWeight: '600' }}>
+                  No professionals are currently registered.
+                </Text>
+              </View>
+            ) : (
+              topPros.map((pro) => (
+                <View key={pro.id} style={styles.proCard}>
                 <View style={[styles.proAvatar, { backgroundColor: pro.color }]}>
                   <Text style={styles.proAvatarText}>{pro.initials}</Text>
                 </View>
@@ -337,7 +377,8 @@ export const HomeScreen = () => {
                   <Text style={styles.verifiedText}>Verified Pro</Text>
                 </View>
               </View>
-            ))}
+            ))
+          )}
           </ScrollView>
 
           <View style={styles.statsCard}>
@@ -397,6 +438,60 @@ export const HomeScreen = () => {
           </TouchableOpacity>
         </View>
       )}
+
+      {/* Location Modal */}
+      <Modal
+        visible={isLocationModalVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setIsLocationModalVisible(false)}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setIsLocationModalVisible(false)}
+        >
+          <View style={styles.locationModalContent} onStartShouldSetResponder={() => true}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Select Location</Text>
+              <TouchableOpacity onPress={() => setIsLocationModalVisible(false)}>
+                <Ionicons name="close" size={24} color={colors.textPrimary} />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.locationModalSubTitle}>
+              Enter your city or area to find local services.
+            </Text>
+
+            <View style={styles.locationInputContainer}>
+              <Ionicons name="location-outline" size={20} color={colors.textSecondary} style={styles.locationInputIcon} />
+              <TextInput
+                style={styles.locationInput}
+                placeholder="e.g. Bandra West, Mumbai"
+                value={tempLocation}
+                onChangeText={setTempLocation}
+                onSubmitEditing={handleSaveLocation}
+                autoFocus
+              />
+            </View>
+
+            <View style={styles.locationModalActions}>
+              <TouchableOpacity 
+                style={[styles.locationActionBtn, styles.locationCancelBtn]} 
+                onPress={() => setIsLocationModalVisible(false)}
+              >
+                <Text style={styles.locationCancelBtnText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={[styles.locationActionBtn, styles.locationSaveBtn]} 
+                onPress={handleSaveLocation}
+              >
+                <Text style={styles.locationSaveBtnText}>Update</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </TouchableOpacity>
+      </Modal>
 
       {/* Notifications Modal */}
       <Modal
@@ -500,6 +595,7 @@ const styles = StyleSheet.create({
     color: '#FFF',
     fontWeight: '600',
     marginLeft: 4,
+    flexShrink: 1,
   },
   notificationBtn: {
     width: 44,
@@ -1026,5 +1122,71 @@ const styles = StyleSheet.create({
     height: 8,
     borderRadius: 4,
     backgroundColor: colors.primary,
+  },
+  locationModalContent: {
+    backgroundColor: '#FFF',
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    padding: 24,
+    paddingBottom: Platform.OS === 'ios' ? 40 : 24,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 12,
+    elevation: 20,
+  },
+  locationModalSubTitle: {
+    fontSize: 14,
+    color: colors.textSecondary,
+    marginBottom: 20,
+    fontWeight: '500',
+    lineHeight: 20,
+  },
+  locationInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    paddingHorizontal: 16,
+    height: 56,
+    marginBottom: 24,
+  },
+  locationInputIcon: {
+    marginRight: 12,
+  },
+  locationInput: {
+    flex: 1,
+    fontSize: 16,
+    color: colors.textPrimary,
+    fontWeight: '600',
+  },
+  locationModalActions: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  locationActionBtn: {
+    flex: 1,
+    height: 52,
+    borderRadius: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  locationCancelBtn: {
+    backgroundColor: '#F1F5F9',
+  },
+  locationCancelBtnText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: colors.textSecondary,
+  },
+  locationSaveBtn: {
+    backgroundColor: colors.primary,
+  },
+  locationSaveBtnText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#FFF',
   },
 });

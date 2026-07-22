@@ -44,6 +44,7 @@ interface AuthState {
       addressType?: 'Home' | 'Work';
     }
   ) => Promise<void>;
+  updateGeneralLocation: (location: string) => Promise<void>;
   showLoginModal: () => void;
   hideLoginModal: () => void;
   markHasSeenInitialLogin: () => void;
@@ -133,6 +134,14 @@ export const useAuthStore = create<AuthState>()(
         } catch (err) {
           console.error('Error saving profile to database:', err);
           throw err;
+        }
+      },
+      updateGeneralLocation: async (location) => {
+        const user = get().user;
+        if (user && user.phone) {
+          await get().updateProfile(undefined, location);
+        } else {
+          set({ user: { phone: '', location } });
         }
       },
       showLoginModal: () => set({ isLoginModalVisible: true }),

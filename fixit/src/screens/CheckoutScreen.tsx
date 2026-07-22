@@ -52,7 +52,7 @@ import { AddressModal, AddressData } from '../components/AddressModal';
 
 export const CheckoutScreen = ({ navigation }: any) => {
   const { items, getTotal, clearCart } = useCartStore();
-  const [paymentMethod, setPaymentMethod] = useState<'UPI' | 'COD'>('UPI');
+  const [paymentMethod, setPaymentMethod] = useState<string>('Pending');
   
   const [currentLocation, setCurrentLocation] = useState<Location.LocationObject | null>(null);
   const [isLocating, setIsLocating] = useState<boolean>(false);
@@ -72,6 +72,8 @@ export const CheckoutScreen = ({ navigation }: any) => {
   );
   const [altPhone, setAltPhone] = useState<string>('');
   const [addressType, setAddressType] = useState<'Home' | 'Work'>('Home');
+  const [lat, setLat] = useState<number | null>(user?.lat || null);
+  const [lng, setLng] = useState<number | null>(user?.lng || null);
   const [isAddressModalVisible, setIsAddressModalVisible] = useState<boolean>(false);
   const [savingAddress, setSavingAddress] = useState<boolean>(false);
 
@@ -89,6 +91,8 @@ export const CheckoutScreen = ({ navigation }: any) => {
       if (user.streetAddress) setStreetAddress(user.streetAddress);
       if (user.landmark) setLandmark(user.landmark);
       if (user.name) setContactName(user.name);
+      if (user.lat) setLat(user.lat);
+      if (user.lng) setLng(user.lng);
     }
   }, [user]);
 
@@ -175,6 +179,8 @@ export const CheckoutScreen = ({ navigation }: any) => {
     setStreetAddress(data.streetAddress);
     setLandmark(data.landmark);
     setAddressType(data.addressType);
+    setLat(data.lat);
+    setLng(data.lng);
   };
 
   const handleConfirm = async () => {
@@ -190,8 +196,8 @@ export const CheckoutScreen = ({ navigation }: any) => {
     const currentHouseNo = user.houseNo || houseNo;
     const currentStreetAddress = user.streetAddress || streetAddress;
     const currentLandmark = user.landmark || landmark;
-    const currentLat = user.lat ?? currentLocation?.coords.latitude ?? 25.0113;
-    const currentLng = user.lng ?? currentLocation?.coords.longitude ?? 84.0200;
+    const currentLat = lat ?? user.lat ?? currentLocation?.coords.latitude ?? 25.0113;
+    const currentLng = lng ?? user.lng ?? currentLocation?.coords.longitude ?? 84.0200;
 
     if (!currentHouseNo.trim() || !currentStreetAddress.trim()) {
       Alert.alert(
@@ -206,7 +212,13 @@ export const CheckoutScreen = ({ navigation }: any) => {
     const problemDescription = items.map(item => `${item.name} (${item.quantity}x)`).join(', ');
     const fullAddr = user.fullAddress || `${currentHouseNo.trim()}, ${currentStreetAddress.trim()}${currentLandmark.trim() ? `, ${currentLandmark.trim()}` : ''}`;
 
-    setBooking({ jobId: 'pending_' + Date.now(), status: 'requesting', message: 'Submitting your request...' });
+    setBooking({ 
+      jobId: 'pending_' + Date.now(), 
+      status: 'requesting', 
+      message: 'Submitting your request...',
+      lat: currentLat,
+      lng: currentLng
+    });
 
     socket?.emit('request_job', {
       customerId: user.phone,
@@ -301,26 +313,6 @@ export const CheckoutScreen = ({ navigation }: any) => {
                 <Text style={styles.itemQty}>Qty: {item.quantity}</Text>
               </View>
               <Text style={styles.itemPrice}>₹{item.price * item.quantity}</Text>
-            </View>
-          ))}
-        </View>
-
-        {/* Payment */}
-        <Text style={styles.sectionTitle}>Payment Method</Text>
-        <View style={styles.card}>
-          {(['UPI', 'COD'] as const).map((method, i) => (
-            <View key={method}>
-              {i > 0 && <View style={styles.divider} />}
-              <TouchableOpacity style={styles.paymentRow} onPress={() => setPaymentMethod(method)}>
-                <Ionicons
-                  name={paymentMethod === method ? 'radio-button-on' : 'radio-button-off'}
-                  size={24}
-                  color={paymentMethod === method ? colors.primary : colors.textSecondary}
-                />
-                <Text style={styles.paymentText}>
-                  {method === 'UPI' ? 'Pay via UPI (GPay, PhonePe)' : 'Pay after Service (Cash)'}
-                </Text>
-              </TouchableOpacity>
             </View>
           ))}
         </View>

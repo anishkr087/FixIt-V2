@@ -68,7 +68,7 @@ export default function ProfileScreen() {
             </Text>
             <View style={styles.ratingBadge}>
               <Star size={16} color="#F59E0B" fill="#F59E0B" />
-              <Text style={styles.ratingText}>{partnerInfo?.rating || '4.9'}</Text>
+              <Text style={styles.ratingText}>{partnerInfo?.rating || '5.0'}</Text>
             </View>
           </View>
         </View>
@@ -82,12 +82,12 @@ export default function ProfileScreen() {
             onPress={() =>
               handleAnalyticsPress(
                 'Jobs Done 🛠️',
-                `You have successfully completed ${partnerInfo?.jobsCompleted || 42} service jobs with FixIt.`
+                `You have successfully completed ${partnerInfo?.jobsCompleted || 0} service jobs with FixIt.`
               )
             }
           >
             <CheckCircle size={24} color={colors.success} style={{ marginBottom: 8 }} />
-            <Text style={styles.analyticValue}>{partnerInfo?.jobsCompleted || 42}</Text>
+            <Text style={styles.analyticValue}>{partnerInfo?.jobsCompleted || 0}</Text>
             <Text style={styles.analyticLabel}>Jobs Done</Text>
           </TouchableOpacity>
 
@@ -96,14 +96,14 @@ export default function ProfileScreen() {
             activeOpacity={0.7}
             onPress={() =>
               handleAnalyticsPress(
-                'Acceptance Rate ⚡',
-                'Your job request acceptance rate is 95%. Keep it above 85% to stay eligible for priority matchmaking.'
+                'Average Rating ⭐',
+                `Your average customer rating is ${partnerInfo?.rating || 5.0} stars.`
               )
             }
           >
-            <Clock size={24} color={colors.primary} style={{ marginBottom: 8 }} />
-            <Text style={styles.analyticValue}>95%</Text>
-            <Text style={styles.analyticLabel}>Acceptance</Text>
+            <Star size={24} color="#F59E0B" fill="#F59E0B" style={{ marginBottom: 8 }} />
+            <Text style={styles.analyticValue}>{partnerInfo?.rating || 5.0}</Text>
+            <Text style={styles.analyticLabel}>Average Rating</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
@@ -111,14 +111,14 @@ export default function ProfileScreen() {
             activeOpacity={0.7}
             onPress={() =>
               handleAnalyticsPress(
-                'Cancellation Rate ⚠️',
-                'Your cancellation rate is 2%. Low cancellation rates ensure higher wallet rewards and customer trust.'
+                'Wallet Balance 💳',
+                `Your current wallet balance is ₹${partnerInfo?.walletBalance || 0}.`
               )
             }
           >
-            <XCircle size={24} color={colors.error} style={{ marginBottom: 8 }} />
-            <Text style={styles.analyticValue}>2%</Text>
-            <Text style={styles.analyticLabel}>Cancellations</Text>
+            <CreditCard size={24} color={colors.primary} style={{ marginBottom: 8 }} />
+            <Text style={styles.analyticValue}>₹{partnerInfo?.walletBalance || 0}</Text>
+            <Text style={styles.analyticLabel}>Wallet Balance</Text>
           </TouchableOpacity>
         </View>
 

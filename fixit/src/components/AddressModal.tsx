@@ -70,7 +70,9 @@ export const AddressModal: React.FC<AddressModalProps> = ({
 
   // Form State (Step 2)
   const [houseNo, setHouseNo] = useState<string>(user?.houseNo || '');
-  const [landmark, setLandmark] = useState<string>(user?.landmark || '');
+  const [areaVillage, setAreaVillage] = useState<string>(user?.streetAddress || '');
+  const [city, setCity] = useState<string>(user?.location || '');
+  const [localityNearby, setLocalityNearby] = useState<string>(user?.landmark || '');
   const [contactName, setContactName] = useState<string>(user?.name || '');
   const [contactPhone, setContactPhone] = useState<string>(
     user?.phone ? user.phone.replace('+91', '') : ''
@@ -86,7 +88,9 @@ export const AddressModal: React.FC<AddressModalProps> = ({
       setStep(1);
       if (user) {
         if (user.houseNo) setHouseNo(user.houseNo);
-        if (user.landmark) setLandmark(user.landmark);
+        if (user.landmark) setLocalityNearby(user.landmark);
+        if (user.streetAddress) setAreaVillage(user.streetAddress);
+        if (user.location) setCity(user.location);
         if (user.name) setContactName(user.name);
         if (user.phone) setContactPhone(user.phone.replace('+91', ''));
         if (user.altPhone) setAltPhone(user.altPhone);
@@ -165,6 +169,17 @@ export const AddressModal: React.FC<AddressModalProps> = ({
 
         setLocationName(namePart);
         setFullGeoAddress(formatted || `${lat.toFixed(4)}, ${lng.toFixed(4)}`);
+
+        // Auto-fill inputs from map coordinates
+        if (addr.subregion || addr.district) {
+          setAreaVillage(addr.subregion || addr.district || '');
+        }
+        if (addr.city || addr.subregion) {
+          setCity(addr.city || addr.subregion || '');
+        }
+        if (addr.street || addr.name) {
+          setLocalityNearby(addr.street || addr.name || '');
+        }
       }
     } catch (err) {
       console.log('Reverse geocode error:', err);
@@ -184,6 +199,14 @@ export const AddressModal: React.FC<AddressModalProps> = ({
       Alert.alert('Required Field', 'Please enter your Flat / House / Building name.');
       return;
     }
+    if (!areaVillage.trim()) {
+      Alert.alert('Required Field', 'Please enter your Area / Village.');
+      return;
+    }
+    if (!city.trim()) {
+      Alert.alert('Required Field', 'Please enter your City.');
+      return;
+    }
     if (!contactName.trim()) {
       Alert.alert('Required Field', 'Please enter your full name.');
       return;
@@ -193,15 +216,14 @@ export const AddressModal: React.FC<AddressModalProps> = ({
       return;
     }
 
-    const area = fullGeoAddress || `${selectedCoords.lat.toFixed(4)}, ${selectedCoords.lng.toFixed(4)}`;
-    const constructedFullAddress = `${houseNo.trim()}, ${area}${landmark.trim() ? `, Landmark: ${landmark.trim()}` : ''}`;
+    const constructedFullAddress = `${houseNo.trim()}, ${localityNearby.trim()}, ${areaVillage.trim()}, ${city.trim()}`;
 
     try {
       setSaving(true);
-      await updateProfile(contactName.trim(), constructedFullAddress, user?.email, {
+      await updateProfile(contactName.trim(), city.trim(), user?.email, {
         houseNo: houseNo.trim(),
-        streetAddress: area,
-        landmark: landmark.trim(),
+        streetAddress: areaVillage.trim(),
+        landmark: localityNearby.trim(),
         fullAddress: constructedFullAddress,
         lat: selectedCoords.lat,
         lng: selectedCoords.lng,
@@ -211,8 +233,8 @@ export const AddressModal: React.FC<AddressModalProps> = ({
 
       const savedData: AddressData = {
         houseNo: houseNo.trim(),
-        streetAddress: area,
-        landmark: landmark.trim(),
+        streetAddress: areaVillage.trim(),
+        landmark: localityNearby.trim(),
         fullAddress: constructedFullAddress,
         contactName: contactName.trim(),
         contactPhone: contactPhone.trim(),
@@ -364,10 +386,46 @@ export const AddressModal: React.FC<AddressModalProps> = ({
                 />
               </View>
 
-              {/* Area / Sector / Locality Box */}
+              {/* Locality (nearby) */}
+              <View style={styles.fieldWrap}>
+                <Text style={styles.fieldLabel}>Locality (nearby) (Optional)</Text>
+                <TextInput
+                  style={styles.textInput}
+                  placeholder="e.g. Near Main Temple, Landmark"
+                  placeholderTextColor="#94A3B8"
+                  value={localityNearby}
+                  onChangeText={setLocalityNearby}
+                />
+              </View>
+
+              {/* Area / Village */}
+              <View style={styles.fieldWrap}>
+                <Text style={styles.fieldLabel}>Area / Village *</Text>
+                <TextInput
+                  style={styles.textInput}
+                  placeholder="Enter area or village name"
+                  placeholderTextColor="#94A3B8"
+                  value={areaVillage}
+                  onChangeText={setAreaVillage}
+                />
+              </View>
+
+              {/* City */}
+              <View style={styles.fieldWrap}>
+                <Text style={styles.fieldLabel}>City *</Text>
+                <TextInput
+                  style={styles.textInput}
+                  placeholder="Enter city"
+                  placeholderTextColor="#94A3B8"
+                  value={city}
+                  onChangeText={setCity}
+                />
+              </View>
+
+              {/* Reference Geocoded Address */}
               <View style={styles.areaBox}>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.areaBoxLabel}>Area / Sector / Locality</Text>
+                  <Text style={styles.areaBoxLabel}>Pinned Location Reference</Text>
                   <Text style={styles.areaBoxValue} numberOfLines={3}>
                     {fullGeoAddress || 'Location selected on map'}
                   </Text>

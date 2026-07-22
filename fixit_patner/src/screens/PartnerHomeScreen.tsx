@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, Dimensions, TouchableOpacity, SafeAreaView, ActivityIndicator, Platform, Alert, Vibration } from 'react-native';
+import { View, Text, StyleSheet, Dimensions, TouchableOpacity, SafeAreaView, ActivityIndicator, Platform, Alert, Vibration, Linking, Modal } from 'react-native';
 
 const playAlarmSound = () => {
   try {
@@ -82,6 +82,7 @@ export default function PartnerHomeScreen({ navigation }: any) {
   
   const [walletBalance, setWalletBalance] = useState<number>(0);
   const [fetchingWallet, setFetchingWallet] = useState<boolean>(true);
+  const [showPaymentSelectionModal, setShowPaymentSelectionModal] = useState<boolean>(false);
 
   const { partnerInfo, logout, token } = useAuth();
 
@@ -272,19 +273,50 @@ export default function PartnerHomeScreen({ navigation }: any) {
   };
 
   const advanceJobStatus = (newStatus: string) => {
-    setJobStatus(newStatus);
-    socketRef.current?.emit('update_job_status', { 
+    if (newStatus === 'completed') {
+      setShowPaymentSelectionModal(true);
+    } else {
+      setJobStatus(newStatus);
+      socketRef.current?.emit('update_job_status', { 
+        jobId: acceptedJob.jobId, 
+        partnerId: partnerInfo?._id,
+        status: newStatus 
+      });
+    }
+  };
+
+  const submitJobCompletion = (method: 'UPI' | 'COD') => {
+    if (!acceptedJob) return;
+    setShowPaymentSelectionModal(false);
+    socketRef.current?.emit('complete_job', { 
       jobId: acceptedJob.jobId, 
       partnerId: partnerInfo?._id,
-      status: newStatus 
+      paymentMethod: method
     });
+    Alert.alert('Job Completed! ✅', `Job marked as completed. Payment recorded via ${method === 'UPI' ? 'UPI' : 'Cash'}.`);
+    setAcceptedJob(null);
+    setJobStatus('');
+    fetchWalletBalance();
+  };
 
-    if (newStatus === 'completed') {
-      Alert.alert('Job Completed!', 'Payment has been processed cleanly.');
-      setAcceptedJob(null);
-      setJobStatus('');
-      // Trigger earnings refresh if needed
-    }
+  const handleOpenGoogleMaps = () => {
+    if (!acceptedJob) return;
+    const lat = acceptedJob.lat;
+    const lng = acceptedJob.lng;
+    const url = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`;
+    
+    Linking.canOpenURL(url)
+      .then((supported) => {
+        if (supported) {
+          Linking.openURL(url);
+        } else {
+          Alert.alert('Error', 'Google Maps is not installed or cannot be opened.');
+        }
+      })
+      .catch((err) => {
+        console.error('Error opening Google Maps:', err);
+        Alert.alert('Error', 'Failed to open navigation directions.');
+      });
   };
 
   if (loading || !currentLocation) {
@@ -489,7 +521,22 @@ export default function PartnerHomeScreen({ navigation }: any) {
           
           <Text style={styles.jobUser}>Task: {acceptedJob.problemDescription}</Text>
           <View style={styles.divider} />
-          <Text style={styles.addressText}>📍 Door Address: {acceptedJob.fullAddress || acceptedJob.doorAddress || 'Customer Door Location'}</Text>
+          
+          <View style={styles.addressRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.addressText}>📍 Door Address: {acceptedJob.fullAddress || acceptedJob.doorAddress || 'Customer Door Location'}</Text>
+            </View>
+            {(jobStatus === 'accepted' || jobStatus === 'on_the_way') && (
+              <TouchableOpacity 
+                style={styles.googleMapsBtn} 
+                onPress={handleOpenGoogleMaps}
+                activeOpacity={0.8}
+              >
+                <Navigation size={14} color="#FFF" style={{ marginRight: 6 }} />
+                <Text style={styles.googleMapsBtnText}>Navigate</Text>
+              </TouchableOpacity>
+            )}
+          </View>
           
           {/* Workflow Action Button */}
           {jobStatus === 'accepted' && (
@@ -511,13 +558,61 @@ export default function PartnerHomeScreen({ navigation }: any) {
           )}
 
           {jobStatus === 'work_started' && (
-            <TouchableOpacity style={[styles.button, { backgroundColor: colors.success }]} onPress={() => advanceJobStatus('completed')}>
+            <TouchableOpacity style={[styles.button, { backgroundColor: colors.success }]} onPress={() => setShowPaymentSelectionModal(true)}>
               <CheckCircle size={20} color={colors.card} style={{marginRight: 8}} />
               <Text style={styles.buttonText}>Mark as Completed</Text>
             </TouchableOpacity>
           )}
        </View>
       )}
+
+      {/* Payment Method Selection Modal */}
+      <Modal
+        visible={showPaymentSelectionModal}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setShowPaymentSelectionModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalHeaderTitle}>Select Payment Method 💳</Text>
+            <Text style={styles.modalSubTitle}>
+              Confirm how you received the payment from the customer:
+            </Text>
+
+            <TouchableOpacity 
+              style={[styles.paymentSelectOption, { borderColor: colors.primary }]}
+              onPress={() => submitJobCompletion('UPI')}
+              activeOpacity={0.8}
+            >
+              <Navigation size={24} color={colors.primary} />
+              <View style={{ flex: 1, marginLeft: 12 }}>
+                <Text style={styles.paymentOptionTitle}>UPI / Online Transfer</Text>
+                <Text style={styles.paymentOptionDesc}>GPay, PhonePe, Paytm, or online link</Text>
+              </View>
+            </TouchableOpacity>
+
+            <TouchableOpacity 
+              style={[styles.paymentSelectOption, { borderColor: '#16A34A', marginTop: 12 }]}
+              onPress={() => submitJobCompletion('COD')}
+              activeOpacity={0.8}
+            >
+              <CheckCircle size={24} color="#16A34A" />
+              <View style={{ flex: 1, marginLeft: 12 }}>
+                <Text style={styles.paymentOptionTitle}>Cash Payment</Text>
+                <Text style={styles.paymentOptionDesc}>Paid in cash directly to you</Text>
+              </View>
+            </TouchableOpacity>
+
+            <TouchableOpacity 
+              style={styles.cancelModalBtn} 
+              onPress={() => setShowPaymentSelectionModal(false)}
+            >
+              <Text style={styles.cancelModalText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -720,5 +815,83 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
     color: '#1E40AF',
+  },
+  addressRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#F8FAFC',
+    padding: 12,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    marginVertical: 12,
+    gap: 12,
+  },
+  googleMapsBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#0F172A',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 12,
+  },
+  googleMapsBtnText: {
+    color: '#FFF',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: '#FFF',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 24,
+    paddingBottom: Platform.OS === 'ios' ? 40 : 24,
+  },
+  modalHeaderTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: colors.text,
+    marginBottom: 8,
+  },
+  modalSubTitle: {
+    fontSize: 14,
+    color: colors.textSecondary,
+    marginBottom: 20,
+    lineHeight: 20,
+  },
+  paymentSelectOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1.5,
+    borderRadius: 16,
+    padding: 16,
+    backgroundColor: '#F8FAFC',
+  },
+  paymentOptionTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: colors.text,
+  },
+  paymentOptionDesc: {
+    fontSize: 12,
+    color: colors.textSecondary,
+    marginTop: 2,
+  },
+  cancelModalBtn: {
+    marginTop: 16,
+    paddingVertical: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cancelModalText: {
+    fontSize: 16,
+    color: colors.textSecondary,
+    fontWeight: '600',
   },
 });

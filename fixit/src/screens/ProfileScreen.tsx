@@ -10,6 +10,7 @@ import { colors } from '../theme/colors';
 import { profileSchema, ProfileFormValues } from '../features/profile/validators/profileSchema';
 import { useProfileMutation } from '../features/profile/api/useProfile';
 import { AddressModal } from '../components/AddressModal';
+import { apiClient } from '../api/apiClient';
 
 export const ProfileScreen = () => {
   const insets = useSafeAreaInsets();
@@ -20,7 +21,7 @@ export const ProfileScreen = () => {
   const [isEditing, setIsEditing] = useState(false);
   const [isAddressModalVisible, setIsAddressModalVisible] = useState(false);
   const [isPaymentModalVisible, setIsPaymentModalVisible] = useState(false);
-  const [isLoyaltyModalVisible, setIsLoyaltyModalVisible] = useState(false);
+  const [bookingsCount, setBookingsCount] = useState(0);
 
   const profileMutation = useProfileMutation();
 
@@ -41,6 +42,18 @@ export const ProfileScreen = () => {
       setValue('location', user.location || '');
     }
   }, [user, isEditing]);
+
+  useEffect(() => {
+    if (user?.phone) {
+      apiClient.get(`/customer/bookings/${user.phone}`)
+        .then(res => {
+          if (res.data?.success && res.data.bookings) {
+            setBookingsCount(res.data.bookings.length);
+          }
+        })
+        .catch(err => console.log('Error fetching bookings count in profile:', err));
+    }
+  }, [user?.phone]);
 
   const onSubmit = async (values: ProfileFormValues) => {
     try {
@@ -115,35 +128,12 @@ export const ProfileScreen = () => {
           {/* Stats Row Card */}
           <View style={styles.statsCardContainer}>
             <View style={styles.statsCard}>
-              <View style={styles.statColumn}>
-                <Text style={styles.statNumber}>14</Text>
-                <Text style={styles.statLabel}>Bookings</Text>
-              </View>
-              <View style={styles.statDivider} />
-              <View style={styles.statColumn}>
-                <Text style={styles.statNumber}>9</Text>
-                <Text style={styles.statLabel}>Reviews Given</Text>
-              </View>
-              <View style={styles.statDivider} />
-              <View style={styles.statColumn}>
-                <Text style={styles.statNumber}>₹250</Text>
-                <Text style={styles.statLabel}>Wallet</Text>
+              <View style={[styles.statColumn, { flex: 1, alignItems: 'center' }]}>
+                <Text style={styles.statNumber}>{bookingsCount}</Text>
+                <Text style={styles.statLabel}>Total Bookings</Text>
               </View>
             </View>
           </View>
-
-          {/* Loyalty Status Card */}
-          <TouchableOpacity style={styles.loyaltyCard} activeOpacity={0.8} onPress={() => setIsLoyaltyModalVisible(true)}>
-            <View style={styles.loyaltyIconContainer}>
-              <Ionicons name="star" size={22} color="#FFF" />
-            </View>
-            <View style={styles.loyaltyDetails}>
-              <Text style={styles.loyaltyLabel}>LOYALTY STATUS</Text>
-              <Text style={styles.loyaltyTitle}>Gold Member</Text>
-              <Text style={styles.loyaltySub}>240 pts to Platinum · Book 2 more services</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={18} color="#FFF" />
-          </TouchableOpacity>
 
           {/* Personal Info Header */}
           <View style={styles.infoSectionHeader}>
@@ -285,42 +275,6 @@ export const ProfileScreen = () => {
             </View>
             <TouchableOpacity style={modalStyles.closeBtn} onPress={() => setIsPaymentModalVisible(false)}>
               <Text style={modalStyles.closeBtnText}>Done</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
-
-      {/* Loyalty Status Modal */}
-      <Modal
-        visible={isLoyaltyModalVisible}
-        animationType="slide"
-        transparent={true}
-        onRequestClose={() => setIsLoyaltyModalVisible(false)}
-      >
-        <View style={modalStyles.overlay}>
-          <View style={modalStyles.contentContainer}>
-            <View style={modalStyles.header}>
-              <Text style={modalStyles.headerTitle}>Loyalty Perks ⭐</Text>
-              <TouchableOpacity onPress={() => setIsLoyaltyModalVisible(false)} style={{ padding: 4 }}>
-                <Ionicons name="close" size={24} color="#0F172A" />
-              </TouchableOpacity>
-            </View>
-            <View style={{ gap: 12, marginVertical: 16 }}>
-              <View style={modalStyles.perkItem}>
-                <Ionicons name="gift-outline" size={22} color="#FF5E14" />
-                <Text style={modalStyles.perkText}>10% Extra Discount on electrical & plumbing</Text>
-              </View>
-              <View style={modalStyles.perkItem}>
-                <Ionicons name="flash-outline" size={22} color="#FF5E14" />
-                <Text style={modalStyles.perkText}>Priority Technician Dispatch (within 15 mins)</Text>
-              </View>
-              <View style={modalStyles.perkItem}>
-                <Ionicons name="shield-checkmark-outline" size={22} color="#FF5E14" />
-                <Text style={modalStyles.perkText}>Free 30-Day Service Guarantee</Text>
-              </View>
-            </View>
-            <TouchableOpacity style={modalStyles.closeBtn} onPress={() => setIsLoyaltyModalVisible(false)}>
-              <Text style={modalStyles.closeBtnText}>Close</Text>
             </TouchableOpacity>
           </View>
         </View>
