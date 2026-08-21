@@ -181,38 +181,36 @@ export const CategoryScreen = ({ route, navigation }: any) => {
           </View>
         )}
 
-        {mainServices.length > 0 && (
-          <View style={[styles.sectionContainer, { marginTop: categoryOneTapServices.length > 0 ? 10 : 0 }]}>
-            <View style={styles.sectionHeader}>
-              <View style={styles.sectionHeaderTitleRow}>
-                <Ionicons name="build-outline" size={20} color={colors.textPrimary} style={{ marginRight: 6 }} />
-                <Text style={styles.sectionTitleText}>Regular Services</Text>
-              </View>
-              <Text style={styles.sectionSubtitleText}>Standard professional solutions</Text>
+        {/* Book Professional Directly Section (Replacing old Regular Services) */}
+        <View style={[styles.sectionContainer, { marginTop: categoryOneTapServices.length > 0 ? 10 : 0 }]}>
+          <View style={styles.sectionHeader}>
+            <View style={styles.sectionHeaderTitleRow}>
+              <Ionicons name="people-outline" size={20} color={colors.textPrimary} style={{ marginRight: 6 }} />
+              <Text style={styles.sectionTitleText}>Book Professional Directly</Text>
             </View>
-            {mainServices.map((service) => (
-              <GlassCard key={service.id} style={styles.serviceCard}>
-                <View style={styles.serviceInfo}>
-                  <Text style={styles.serviceName}>{service.name}</Text>
-                  <Text style={styles.price}>₹ {service.price}</Text>
-                </View>
-                <TouchableOpacity 
-                  style={styles.addButton}
-                  onPress={() => addItem({ ...service, category: categoryName })}
-                >
-                  <Text style={styles.addText}>Add</Text>
-                </TouchableOpacity>
-              </GlassCard>
-            ))}
+            <Text style={styles.sectionSubtitleText}>Get a certified expert at your doorstep</Text>
           </View>
-        )}
-
-        {categoryOneTapServices.length === 0 && mainServices.length === 0 && (
-          <View style={styles.emptyContainer}>
-            <Ionicons name="construct-outline" size={64} color={colors.textSecondary} />
-            <Text style={styles.emptyText}>Services coming soon!</Text>
-          </View>
-        )}
+          <GlassCard style={styles.serviceCard}>
+            <View style={styles.serviceInfo}>
+              <Text style={styles.serviceName}>Book {lookupCategory.replace('_', ' ')} Partner</Text>
+              <Text style={{ fontSize: 13, color: colors.textSecondary, marginTop: 4, paddingRight: 12 }}>
+                Certified expert visits your home to inspect, diagnose, and fix the issue. Visiting charge is ₹199 (adjustable in the final bill).
+              </Text>
+              <Text style={[styles.price, { marginTop: 8 }]}>₹ 199</Text>
+            </View>
+            <TouchableOpacity 
+              style={styles.addButton}
+              onPress={() => addItem({ 
+                id: `bp_${lookupCategory}`, 
+                name: `Book ${lookupCategory.replace('_', ' ')} Partner`, 
+                price: 199, 
+                category: categoryName 
+              })}
+            >
+              <Text style={styles.addText}>Add</Text>
+            </TouchableOpacity>
+          </GlassCard>
+        </View>
       </ScrollView>
 
       {cartCount > 0 && (

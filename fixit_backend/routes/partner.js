@@ -210,7 +210,9 @@ router.get('/jobs', authMiddleware, async (req, res) => {
       time: new Date(j.created_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }),
       address: j.full_address || `${j.house_no}, ${j.street_address}`,
       paymentMethod: j.payment_method,
-      status: j.status
+      status: j.status,
+      lat: j.customer_location_lat,
+      lng: j.customer_location_lng
     }));
 
     res.json({ success: true, history: formattedJobs });

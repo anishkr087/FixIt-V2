@@ -45,7 +45,7 @@ class CustomerService {
     
     const { data, error } = await supabase
       .from('job_requests')
-      .select('*')
+      .select('*, partners(name, rating, experience, phone)')
       .eq('customer_id', phone)
       .order('created_at', { ascending: false });
 
@@ -69,6 +69,16 @@ class CustomerService {
           type: 'Point',
           coordinates: [Number(job.customer_location_lng), Number(job.customer_location_lat)]
         };
+      }
+      if (job.partners) {
+        jobObj.partner = {
+          name: job.partners.name || 'Professional Partner',
+          phone: job.partners.phone || 'Hidden',
+          rating: Number(job.partners.rating) || 5.0,
+          experience: Number(job.partners.experience) || 1
+        };
+      } else {
+        jobObj.partner = null;
       }
       return jobObj;
     });

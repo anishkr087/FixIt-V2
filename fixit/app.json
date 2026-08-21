@@ -19,6 +19,11 @@
     },
     "android": {
       "package": "com.kumar.fixit",
+      "config": {
+        "googleMaps": {
+          "apiKey": "AIzaSyDummyKeyForGoogleMapsInitializationToPreventCrash"
+        }
+      },
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"

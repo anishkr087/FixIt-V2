@@ -9,7 +9,7 @@ import {
   ActivityIndicator,
   RefreshControl,
 } from 'react-native';
-import { CheckCircle, Clock, MapPin, Calendar, IndianRupee, ShieldCheck } from 'lucide-react-native';
+import { CheckCircle, XCircle, Clock, MapPin, Calendar, IndianRupee, ShieldCheck } from 'lucide-react-native';
 import axios from 'axios';
 import { colors } from '../theme/colors';
 import { useAuth, API_URL } from '../context/AuthContext';
@@ -25,6 +25,23 @@ interface HistoryJob {
   paymentMethod: string;
   status: 'completed' | 'cancelled';
 }
+
+const parseJobDescription = (desc: string) => {
+  if (!desc) return { items: 'Job Request', details: '', photos: [] };
+  try {
+    const parsed = JSON.parse(desc);
+    if (parsed && (parsed.items || parsed.details || parsed.photos)) {
+      return {
+        items: parsed.items || 'Job Request',
+        details: parsed.details || '',
+        photos: parsed.photos || []
+      };
+    }
+  } catch (e) {
+    // Plain text format
+  }
+  return { items: desc, details: '', photos: [] };
+};
 
 export default function HistoryScreen() {
   const { token } = useAuth();
@@ -77,44 +94,61 @@ export default function HistoryScreen() {
             <ActivityIndicator size="large" color={colors.primary} />
           </View>
         ) : (
-          history.map((job) => (
-            <View key={job.id} style={styles.jobCard}>
-              <View style={styles.cardHeader}>
-                <View style={styles.headerLeft}>
-                  <View style={styles.statusBadge}>
-                    <CheckCircle size={16} color={colors.success} />
-                    <Text style={styles.statusText}>COMPLETED</Text>
+          history.map((job) => {
+            const parsedDesc = parseJobDescription(job.problemDescription);
+            return (
+              <View key={job.id} style={styles.jobCard}>
+                <View style={styles.cardHeader}>
+                  <View style={styles.headerLeft}>
+                    {job.status === 'completed' ? (
+                      <View style={styles.statusBadge}>
+                        <CheckCircle size={16} color={colors.success} />
+                        <Text style={styles.statusText}>COMPLETED</Text>
+                      </View>
+                    ) : (
+                      <View style={[styles.statusBadge, { backgroundColor: '#FEE2E2' }]}>
+                        <XCircle size={16} color={colors.error} />
+                        <Text style={[styles.statusText, { color: '#991B1B' }]}>CANCELLED</Text>
+                      </View>
+                    )}
                   </View>
-                </View>
-                <Text style={styles.earningText}>+ ₹{job.amount}</Text>
-              </View>
-
-              <Text style={styles.problemText}>{job.problemDescription}</Text>
-              <Text style={styles.customerText}>Customer: {job.customerName}</Text>
-
-              <View style={styles.divider} />
-
-              <View style={styles.metaRow}>
-                <MapPin size={14} color={colors.textSecondary} style={{ marginRight: 4 }} />
-                <Text style={styles.metaText} numberOfLines={1}>
-                  {job.address}
-                </Text>
-              </View>
-
-              <View style={styles.footerRow}>
-                <View style={styles.dateTimeContainer}>
-                  <Calendar size={13} color={colors.textSecondary} style={{ marginRight: 4 }} />
-                  <Text style={styles.dateTimeText}>
-                    {job.date} • {job.time}
+                  <Text style={[styles.earningText, job.status !== 'completed' && { color: colors.textSecondary }]}>
+                    {job.status === 'completed' ? `+ ₹${job.amount}` : '₹0'}
                   </Text>
                 </View>
 
-                <View style={styles.paymentBadge}>
-                  <Text style={styles.paymentText}>{job.paymentMethod}</Text>
+                <Text style={styles.problemText}>{parsedDesc.items}</Text>
+                {parsedDesc.details ? (
+                  <Text style={[styles.customerText, { marginBottom: 6, fontStyle: 'italic', color: colors.text }]}>
+                    Details: "{parsedDesc.details}"
+                  </Text>
+                ) : null}
+                <Text style={styles.customerText}>Customer: {job.customerName}</Text>
+
+                <View style={styles.divider} />
+
+                <View style={styles.metaRow}>
+                  <MapPin size={14} color={colors.textSecondary} style={{ marginRight: 4 }} />
+                  <Text style={styles.metaText} numberOfLines={1}>
+                    {job.address}
+                  </Text>
+                </View>
+
+                <View style={styles.footerRow}>
+                  <View style={styles.dateTimeContainer}>
+                    <Calendar size={13} color={colors.textSecondary} style={{ marginRight: 4 }} />
+                    <Text style={styles.dateTimeText}>
+                      {job.date} • {job.time}
+                    </Text>
+                  </View>
+
+                  <View style={styles.paymentBadge}>
+                    <Text style={styles.paymentText}>{job.paymentMethod}</Text>
+                  </View>
                 </View>
               </View>
-            </View>
-          ))
+            );
+          })
         )}
       </ScrollView>
     </SafeAreaView>

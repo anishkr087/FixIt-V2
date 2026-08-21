@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, Dimensions, TouchableOpacity, SafeAreaView, ActivityIndicator, Platform, Alert, Vibration, Linking, Modal } from 'react-native';
+import { View, Text, StyleSheet, Dimensions, TouchableOpacity, SafeAreaView, ActivityIndicator, Platform, Alert, Vibration, Linking, Modal, Image } from 'react-native';
 
 const playAlarmSound = () => {
   try {
@@ -29,8 +29,8 @@ const playAlarmSound = () => {
 };
 
 // Lazy-load react-native-maps to prevent crash if native module not ready
-let MapView: any = null, Marker: any = null, Polyline: any = null, Circle: any = null;
-try { const M = require('react-native-maps'); MapView = M.default; Marker = M.Marker; Polyline = M.Polyline; Circle = M.Circle; } catch(e) { console.warn('Maps unavailable', e); }
+let MapView: any = null, Marker: any = null, Polyline: any = null, Circle: any = null, UrlTile: any = null;
+try { const M = require('react-native-maps'); MapView = M.default; Marker = M.Marker; Polyline = M.Polyline; Circle = M.Circle; UrlTile = M.UrlTile; } catch(e) { console.warn('Maps unavailable', e); }
 import { MapPin, Navigation, CheckCircle, Clock, Truck, PlayCircle, PowerOff, Shield } from 'lucide-react-native';
 import { io, Socket } from 'socket.io-client';
 import * as Location from 'expo-location';
@@ -68,7 +68,26 @@ if (TaskManager && TaskManager.defineTask) {
   }
 }
 
+const parseJobDescription = (desc: string) => {
+  if (!desc) return { items: 'Job Request', details: '', photos: [] };
+  try {
+    const parsed = JSON.parse(desc);
+    if (parsed && (parsed.items || parsed.details || parsed.photos)) {
+      return {
+        items: parsed.items || 'Job Request',
+        details: parsed.details || '',
+        photos: parsed.photos || []
+      };
+    }
+  } catch (e) {
+    // Plain text format
+  }
+  return { items: desc, details: '', photos: [] };
+};
+
 export default function PartnerHomeScreen({ navigation }: any) {
+  const { partnerInfo, logout, token } = useAuth();
+
   const [isOnline, setIsOnline] = useState(false);
   const [incomingJob, setIncomingJob] = useState<any>(null);
   const [acceptedJob, setAcceptedJob] = useState<any>(null);
@@ -78,13 +97,22 @@ export default function PartnerHomeScreen({ navigation }: any) {
   
   const [loading, setLoading] = useState(true);
   const [timeLeft, setTimeLeft] = useState(30);
-  const [currentLocation, setCurrentLocation] = useState<Location.LocationObject | null>(null);
+  const [currentLocation, setCurrentLocation] = useState<Location.LocationObject | null>({
+    coords: {
+      latitude: partnerInfo?.lat || 25.0113,
+      longitude: partnerInfo?.lng || 84.0200,
+      altitude: null,
+      accuracy: null,
+      altitudeAccuracy: null,
+      heading: null,
+      speed: null,
+    },
+    timestamp: Date.now(),
+  });
   
   const [walletBalance, setWalletBalance] = useState<number>(0);
   const [fetchingWallet, setFetchingWallet] = useState<boolean>(true);
   const [showPaymentSelectionModal, setShowPaymentSelectionModal] = useState<boolean>(false);
-
-  const { partnerInfo, logout, token } = useAuth();
 
   const fetchWalletBalance = async () => {
     try {
@@ -199,6 +227,31 @@ export default function PartnerHomeScreen({ navigation }: any) {
     socketRef.current.on('connect', () => {
       console.log('Connected to socket server with auth token:', socketRef.current?.id);
     });
+
+    // 3. Fetch active job if any
+    try {
+      const response = await axios.get(`${API_URL}/partner/jobs`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (response.data && response.data.success && response.data.history) {
+        const active = response.data.history.find((j: any) => j.status !== 'completed' && j.status !== 'cancelled');
+        if (active) {
+          console.log('[Active Job Restore] Found active job:', active);
+          setAcceptedJob({
+            jobId: active.id,
+            customerName: active.customerName,
+            problemDescription: active.problemDescription,
+            estimatedPrice: active.amount,
+            fullAddress: active.address,
+            lat: active.lat,
+            lng: active.lng,
+          });
+          setJobStatus(active.status);
+        }
+      }
+    } catch (err) {
+      console.log('Error fetching active job on mount:', err);
+    }
 
     socketRef.current.on('new_job_broadcast', (jobData: any) => {
       // Use refs to read current state values — avoids stale closure
@@ -367,19 +420,31 @@ export default function PartnerHomeScreen({ navigation }: any) {
     );
   }
 
+  const incomingParsedDesc = incomingJob ? parseJobDescription(incomingJob.problemDescription) : null;
+  const acceptedParsedDesc = acceptedJob ? parseJobDescription(acceptedJob.problemDescription) : null;
+
   return (
     <View style={styles.container}>
       <MapView
         style={styles.map}
         showsUserLocation={false} 
+        mapType="none"
         region={{
-          latitude: currentLocation.coords.latitude,
-          longitude: currentLocation.coords.longitude,
+          latitude: currentLocation?.coords?.latitude ?? partnerInfo?.lat ?? 25.0113,
+          longitude: currentLocation?.coords?.longitude ?? partnerInfo?.lng ?? 84.0200,
           ...getMapDeltas()
         }}
       >
+        {UrlTile && (
+          <UrlTile
+            urlTemplate="https://a.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png"
+            maximumZ={19}
+            tileSize={256}
+            flipY={false}
+          />
+        )}
         {/* Dynamic Range Circle */}
-        {isOnline && (
+        {isOnline && currentLocation?.coords && (
           <Circle
             center={{
               latitude: currentLocation.coords.latitude,
@@ -393,11 +458,13 @@ export default function PartnerHomeScreen({ navigation }: any) {
         )}
 
         {/* Partner GPS Marker */}
-        <Marker coordinate={{ latitude: currentLocation.coords.latitude, longitude: currentLocation.coords.longitude }} title="You">
-          <View style={styles.partnerMarker}>
-            <View style={styles.partnerMarkerInner} />
-          </View>
-        </Marker>
+        {currentLocation?.coords && (
+          <Marker coordinate={{ latitude: currentLocation.coords.latitude, longitude: currentLocation.coords.longitude }} title="You">
+            <View style={styles.partnerMarker}>
+              <View style={styles.partnerMarkerInner} />
+            </View>
+          </Marker>
+        )}
 
         {/* Customer Marker */}
         {(incomingJob || acceptedJob) && (
@@ -455,7 +522,19 @@ export default function PartnerHomeScreen({ navigation }: any) {
             <Clock size={20} color={colors.error} />
             <Text style={styles.timerText}>00:{timeLeft < 10 ? `0${timeLeft}` : timeLeft}</Text>
           </View>
-          <Text style={styles.jobTitle}>{incomingJob.problemDescription}</Text>
+          <Text style={styles.jobTitle}>{incomingParsedDesc?.items}</Text>
+          {incomingParsedDesc?.details ? (
+            <Text style={[styles.jobUser, { marginTop: -4, marginBottom: 8, fontStyle: 'italic', color: colors.text }]}>
+              Details: "{incomingParsedDesc.details}"
+            </Text>
+          ) : null}
+          {incomingParsedDesc?.photos && incomingParsedDesc.photos.length > 0 ? (
+            <View style={styles.photosRow}>
+              {incomingParsedDesc.photos.map((base64: string, idx: number) => (
+                <Image key={idx} source={{ uri: base64 }} style={styles.partnerPhotoPreview} />
+              ))}
+            </View>
+          ) : null}
           <Text style={styles.jobUser}>Customer: {incomingJob.customerName}</Text>
           <Text style={[styles.jobUser, { marginTop: 4, fontStyle: 'normal', color: colors.textSecondary }]}>
             📍 Door Address: {incomingJob.fullAddress || 'Location specified on map'}
@@ -519,7 +598,19 @@ export default function PartnerHomeScreen({ navigation }: any) {
             </Text>
           </View>
           
-          <Text style={styles.jobUser}>Task: {acceptedJob.problemDescription}</Text>
+          <Text style={styles.jobUser}>Task: {acceptedParsedDesc?.items}</Text>
+          {acceptedParsedDesc?.details ? (
+            <Text style={[styles.jobUser, { marginTop: -8, marginBottom: 8, fontStyle: 'italic', color: colors.text }]}>
+              Details: "{acceptedParsedDesc.details}"
+            </Text>
+          ) : null}
+          {acceptedParsedDesc?.photos && acceptedParsedDesc.photos.length > 0 ? (
+            <View style={styles.photosRow}>
+              {acceptedParsedDesc.photos.map((base64: string, idx: number) => (
+                <Image key={idx} source={{ uri: base64 }} style={styles.partnerPhotoPreview} />
+              ))}
+            </View>
+          ) : null}
           <View style={styles.divider} />
           
           <View style={styles.addressRow}>
@@ -893,5 +984,20 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: colors.textSecondary,
     fontWeight: '600',
+  },
+  photosRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginTop: 4,
+    marginBottom: 8,
+  },
+  partnerPhotoPreview: {
+    width: 60,
+    height: 60,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    resizeMode: 'cover',
   },
 });

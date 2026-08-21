@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, ActivityIndicator, Platform } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -13,22 +13,41 @@ import { apiClient } from '../api/apiClient';
 let MapView: any = null;
 let Marker: any = null;
 let Polyline: any = null;
+let UrlTile: any = null;
 try {
   const Maps = require('react-native-maps');
   MapView = Maps.default;
   Marker = Maps.Marker;
   Polyline = Maps.Polyline;
+  UrlTile = Maps.UrlTile;
 } catch (e) {
   console.warn('react-native-maps not available:', e);
 }
 
+
+const parseJobDescription = (desc: string) => {
+  if (!desc) return { items: 'Home Service', details: '', photos: [] };
+  try {
+    const parsed = JSON.parse(desc);
+    if (parsed && (parsed.items || parsed.details || parsed.photos)) {
+      return {
+        items: parsed.items || 'Home Service',
+        details: parsed.details || '',
+        photos: parsed.photos || []
+      };
+    }
+  } catch (e) {
+    // Plain text format
+  }
+  return { items: desc, details: '', photos: [] };
+};
 
 export const BookingsScreen = () => {
   const insets = useSafeAreaInsets();
   const bottomPadding = insets.bottom > 0 ? insets.bottom : 12;
   const tabBarHeight = 60 + bottomPadding;
 
-  const { activeBooking, partnerLocation, clearBooking } = useBookingStore();
+  const { activeBooking, partnerLocation, setBooking, setPartnerLocation, clearBooking } = useBookingStore();
   const { socket, connect } = useSocketStore();
   const [currentLocation, setCurrentLocation] = useState<Location.LocationObject | null>(null);
 
@@ -42,7 +61,21 @@ export const BookingsScreen = () => {
       setLoadingHistory(true);
       const response = await apiClient.get(`/customer/bookings/${user.phone}`);
       if (response.data && response.data.success && response.data.bookings) {
-        setPastBookings(response.data.bookings);
+        const bookings = response.data.bookings;
+        setPastBookings(bookings);
+
+        // Scan past bookings to restore active booking if one is still in progress
+        const active = bookings.find((b: any) => b.status !== 'completed' && b.status !== 'cancelled');
+        if (active) {
+          setBooking({
+            jobId: active.id || active._id,
+            status: active.status,
+            message: `Professional status: ${active.status.toUpperCase().replace('_', ' ')}`,
+            lat: active.customer_location_lat,
+            lng: active.customer_location_lng,
+            partner: active.partner || null
+          });
+        }
       }
     } catch (err) {
       console.error('Error fetching bookings inside BookingsScreen:', err);
@@ -70,6 +103,50 @@ export const BookingsScreen = () => {
   useEffect(() => {
     fetchBookingHistory();
   }, [user]);
+
+  // Store activeBooking in ref to prevent stale closures inside socket listeners
+  const activeBookingRef = useRef(activeBooking);
+  useEffect(() => {
+    activeBookingRef.current = activeBooking;
+  }, [activeBooking]);
+
+  // Connect socket and register listeners for status updates
+  useEffect(() => {
+    if (!socket) return;
+
+    const handleBookingStatusUpdate = (data: any) => {
+      console.log('booking_status_update in BookingsScreen:', data);
+      if (data) {
+        const currentBooking = activeBookingRef.current;
+        if (currentBooking && (currentBooking.jobId.startsWith('pending_') || currentBooking.jobId === data.jobId)) {
+          setBooking({
+            ...currentBooking,
+            ...data,
+            partner: data.partner !== undefined ? data.partner : currentBooking.partner,
+            lat: data.lat !== undefined ? data.lat : currentBooking.lat,
+            lng: data.lng !== undefined ? data.lng : currentBooking.lng,
+          });
+        } else if (!currentBooking) {
+          setBooking(data);
+        }
+      }
+    };
+
+    const handlePartnerLocationUpdate = (data: any) => {
+      console.log('partner_location_update in BookingsScreen:', data);
+      if (data && data.lat && data.lng) {
+        setPartnerLocation({ lat: data.lat, lng: data.lng });
+      }
+    };
+
+    socket.on('booking_status_update', handleBookingStatusUpdate);
+    socket.on('partner_location_update', handlePartnerLocationUpdate);
+
+    return () => {
+      socket.off('booking_status_update', handleBookingStatusUpdate);
+      socket.off('partner_location_update', handlePartnerLocationUpdate);
+    };
+  }, [socket]);
 
   // Refresh past bookings when a job is completed
   useEffect(() => {
@@ -140,6 +217,7 @@ export const BookingsScreen = () => {
           <View style={styles.mapContainer}>
             <MapView
               style={styles.liveMap}
+              mapType="none"
               region={{
                 latitude: activeBooking?.lat || user?.lat || currentLocation?.coords.latitude || pLocation?.lat || 28.6139,
                 longitude: activeBooking?.lng || user?.lng || currentLocation?.coords.longitude || pLocation?.lng || 77.2090,
@@ -149,6 +227,14 @@ export const BookingsScreen = () => {
               scrollEnabled={true}
               zoomEnabled={true}
             >
+              {UrlTile && (
+                <UrlTile
+                  urlTemplate="https://a.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png"
+                  maximumZ={19}
+                  tileSize={256}
+                  flipY={false}
+                />
+              )}
               {/* Customer Marker */}
               {(activeBooking?.lat || user?.lat || currentLocation) && (
                 <Marker
@@ -282,6 +368,12 @@ export const BookingsScreen = () => {
             <Ionicons name="checkmark-circle" size={44} color={colors.success} style={{ marginBottom: 6 }} />
             <Text style={styles.completedSuccessTitle}>Service Completed! ✅</Text>
             <Text style={styles.completedSuccessSub}>Your service request has been successfully fulfilled.</Text>
+            <TouchableOpacity
+              style={[styles.completeBtn, { marginTop: 12 }]}
+              onPress={clearBooking}
+            >
+              <Text style={styles.completeBtnText}>Done</Text>
+            </TouchableOpacity>
           </View>
         )}
 
@@ -337,13 +429,20 @@ export const BookingsScreen = () => {
                   ? colors.danger 
                   : colors.warning;
 
+              const parsedDesc = parseJobDescription(item.problemDescription);
+
               return (
                 <View key={item._id} style={styles.card}>
                   <View style={styles.cardHeader}>
                     <View style={{ flex: 1, marginRight: 8 }}>
                       <Text style={styles.serviceTitle} numberOfLines={1}>
-                        {item.problemDescription || 'Home Service'}
+                        {parsedDesc.items}
                       </Text>
+                      {parsedDesc.details ? (
+                        <Text style={[styles.date, { fontStyle: 'italic', marginTop: 2 }]} numberOfLines={1}>
+                          "{parsedDesc.details}"
+                        </Text>
+                      ) : null}
                       <Text style={styles.date}>{formattedDate}</Text>
                     </View>
                     <Text style={styles.price}>₹{item.estimatedPrice}</Text>

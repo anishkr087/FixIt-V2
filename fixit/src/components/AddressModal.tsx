@@ -13,7 +13,7 @@ import {
   Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import MapView, { Marker, PROVIDER_DEFAULT } from 'react-native-maps';
+import MapView, { Marker, UrlTile, PROVIDER_DEFAULT } from 'react-native-maps';
 import * as Location from 'expo-location';
 import { colors } from '../theme/colors';
 import { useAuthStore } from '../store/useAuthStore';
@@ -293,10 +293,17 @@ export const AddressModal: React.FC<AddressModalProps> = ({
                 ref={mapRef}
                 style={styles.map}
                 provider={PROVIDER_DEFAULT}
-                initialRegion={region}
+                mapType="none"
+                initialRegion={region || { latitude: 25.0113, longitude: 84.0200, latitudeDelta: 0.005, longitudeDelta: 0.005 }}
                 onRegionChangeComplete={handleRegionChangeComplete}
               >
-                <Marker coordinate={{ latitude: selectedCoords.lat, longitude: selectedCoords.lng }} />
+                <UrlTile
+                  urlTemplate="https://a.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png"
+                  maximumZ={19}
+                  tileSize={256}
+                  flipY={false}
+                />
+                <Marker coordinate={{ latitude: selectedCoords?.lat ?? 25.0113, longitude: selectedCoords?.lng ?? 84.0200 }} />
               </MapView>
 
               {/* Center Pin Indicator & Bubble */}

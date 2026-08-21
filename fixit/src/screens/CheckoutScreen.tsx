@@ -10,8 +10,10 @@ import {
   TextInput, 
   ActivityIndicator,
   Vibration,
-  Platform 
+  Platform,
+  Image 
 } from 'react-native';
+import * as ImagePicker from 'expo-image-picker';
 
 const playSuccessChimeSound = () => {
   try {
@@ -61,6 +63,44 @@ export const CheckoutScreen = ({ navigation }: any) => {
   const { user, updateProfile } = useAuthStore();
   const { socket, connect } = useSocketStore();
   const { setBooking, setPartnerLocation } = useBookingStore();
+
+  const [customDescription, setCustomDescription] = useState<string>('');
+  const [photos, setPhotos] = useState<string[]>([]);
+
+  const pickImage = async () => {
+    try {
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission Denied', 'Please allow media library permissions to upload photos.');
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        quality: 0.2,
+        base64: true,
+      });
+
+      if (!result.canceled && result.assets && result.assets[0]) {
+        const asset = result.assets[0];
+        if (asset.base64) {
+          const mimeType = asset.mimeType || 'image/jpeg';
+          const base64Str = `data:${mimeType};base64,${asset.base64}`;
+          setPhotos(prev => [...prev, base64Str]);
+        } else {
+          Alert.alert('Error', 'Could not get image base64 data.');
+        }
+      }
+    } catch (err) {
+      console.log('Error picking image:', err);
+      Alert.alert('Error', 'Failed to pick image.');
+    }
+  };
+
+  const removePhoto = (index: number) => {
+    setPhotos(prev => prev.filter((_, idx) => idx !== index));
+  };
 
   // Address form state
   const [houseNo, setHouseNo] = useState<string>(user?.houseNo || '');
@@ -209,7 +249,15 @@ export const CheckoutScreen = ({ navigation }: any) => {
     }
 
     const category = items[0]?.category || 'Electrician';
-    const problemDescription = items.map(item => `${item.name} (${item.quantity}x)`).join(', ');
+    const baseDescription = items.map(item => `${item.name} (${item.quantity}x)`).join(', ');
+    
+    // Create the structured JSON payload containing description and photos
+    const problemDescriptionPayload = JSON.stringify({
+      items: baseDescription,
+      details: customDescription.trim(),
+      photos: photos
+    });
+
     const fullAddr = user.fullAddress || `${currentHouseNo.trim()}, ${currentStreetAddress.trim()}${currentLandmark.trim() ? `, ${currentLandmark.trim()}` : ''}`;
 
     setBooking({ 
@@ -223,7 +271,7 @@ export const CheckoutScreen = ({ navigation }: any) => {
     socket?.emit('request_job', {
       customerId: user.phone,
       customerName: user.name || 'Valued Customer',
-      problemDescription,
+      problemDescription: problemDescriptionPayload,
       category,
       paymentMethod,
       estimatedPrice: finalTotal,
@@ -315,6 +363,38 @@ export const CheckoutScreen = ({ navigation }: any) => {
               <Text style={styles.itemPrice}>₹{item.price * item.quantity}</Text>
             </View>
           ))}
+        </View>
+
+        {/* Describe Problem & Photos */}
+        <Text style={styles.sectionTitle}>Problem Details & Photos</Text>
+        <View style={styles.card}>
+          <TextInput
+            style={styles.textArea}
+            placeholder="Type details about the issue (e.g., tap leaking, fan making noise)..."
+            placeholderTextColor={colors.textSecondary}
+            multiline={true}
+            numberOfLines={4}
+            value={customDescription}
+            onChangeText={setCustomDescription}
+          />
+          
+          <Text style={styles.photoHeading}>Add Photos (Max 2):</Text>
+          <View style={styles.photosContainer}>
+            {photos.map((base64Uri, idx) => (
+              <View key={idx} style={styles.photoWrapper}>
+                <Image source={{ uri: base64Uri }} style={styles.photoPreview} />
+                <TouchableOpacity style={styles.deletePhotoBtn} onPress={() => removePhoto(idx)}>
+                  <Ionicons name="close" size={16} color={colors.danger} />
+                </TouchableOpacity>
+              </View>
+            ))}
+            {photos.length < 2 && (
+              <TouchableOpacity style={styles.addPhotoBtn} onPress={pickImage}>
+                <Ionicons name="camera" size={24} color={colors.primary} />
+                <Text style={styles.addPhotoText}>Add Image</Text>
+              </TouchableOpacity>
+            )}
+          </View>
         </View>
 
         {/* Bill */}
@@ -474,4 +554,66 @@ const styles = StyleSheet.create({
     alignItems: 'center', marginBottom: 8,
   },
   saveAddressBtnText: { color: '#FFF', fontWeight: 'bold', fontSize: 16 },
+
+  // Description & Photos Styles
+  textArea: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 14,
+    color: colors.textPrimary,
+    backgroundColor: '#F8FAFC',
+    textAlignVertical: 'top',
+    height: 100,
+    marginBottom: 16,
+  },
+  photoHeading: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.textPrimary,
+    marginBottom: 10,
+  },
+  photosContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  photoWrapper: {
+    position: 'relative',
+    width: 80,
+    height: 80,
+    borderRadius: 8,
+    overflow: 'hidden',
+  },
+  photoPreview: {
+    width: '100%',
+    height: '100%',
+    resizeMode: 'cover',
+  },
+  deletePhotoBtn: {
+    position: 'absolute',
+    top: 4,
+    right: 4,
+    zIndex: 1,
+    backgroundColor: 'rgba(255, 255, 255, 0.7)',
+    borderRadius: 10,
+  },
+  addPhotoBtn: {
+    width: 80,
+    height: 80,
+    borderRadius: 8,
+    borderWidth: 1.5,
+    borderColor: colors.primary,
+    borderStyle: 'dashed',
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#EFF6FF',
+  },
+  addPhotoText: {
+    fontSize: 11,
+    color: colors.primary,
+    fontWeight: 'bold',
+    marginTop: 4,
+  },
 });
