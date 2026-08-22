@@ -14,7 +14,7 @@ import { apiClient } from '../api/apiClient';
 
 const { width } = Dimensions.get('window');
 
-const FILTER_CATEGORIES = ['All', 'Electrical', 'Plumbing', 'Welding', 'Carpenter', 'Cleaning'];
+const FILTER_CATEGORIES = ['All', 'Electrical', 'Plumbing', 'Welding', 'Carpenter', 'Mechanic'];
 
 const SERVICES_DATA = [
   {
@@ -42,28 +42,16 @@ const SERVICES_DATA = [
     iconColor: '#06B6D4',
   },
   {
-    id: 's_cleaning',
-    categoryName: 'Cleaning',
-    dbCategory: 'Cleaning',
-    title: 'Cleaning',
-    desc: 'Deep clean, sofa & bathroom sanitization',
-    price: 179,
-    rating: 4.7,
-    icon: 'sparkles',
-    bgColor: '#EBFDF5',
-    iconColor: '#10B981',
-  },
-  {
-    id: 's_pest',
-    categoryName: 'Pest Control',
-    dbCategory: 'Pest Control',
-    title: 'Pest Control',
-    desc: 'Termites, cockroaches & bed bugs',
-    price: 599,
-    rating: 4.4,
-    icon: 'bug',
-    bgColor: '#FFFBEB',
-    iconColor: '#F59E0B',
+    id: 's_welding',
+    categoryName: 'Welding',
+    dbCategory: 'Welder',
+    title: 'Welding',
+    desc: 'Gates, grills, structural repairs & fabrication',
+    price: 349,
+    rating: 4.8,
+    icon: 'construct',
+    bgColor: '#FEF2F2',
+    iconColor: '#DC2626',
   },
   {
     id: 's_carpenter',
@@ -408,8 +396,8 @@ export const HomeScreen = () => {
               <View style={styles.offerBadge}>
                 <Text style={styles.offerBadgeText}>LIMITED OFFER</Text>
               </View>
-              <Text style={styles.bannerTitleText}>Home Sparkle Sale</Text>
-              <Text style={styles.bannerDescText}>Get deep cleaning starting at just ₹179!</Text>
+              <Text style={styles.bannerTitleText}>Expert Welding Work</Text>
+              <Text style={styles.bannerDescText}>Metal fabrication & gate repairs starting at ₹349!</Text>
             </View>
             <TouchableOpacity 
               style={styles.bannerBookBtn} 

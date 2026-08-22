@@ -513,16 +513,11 @@ io.on('connection', (socket) => {
       };
 
       try {
-        const { data: pDb, error: pError } = await supabase
-          .from('partners')
-          .select('*')
-          .eq('id', partnerId)
-          .maybeSingle();
-        if (pError) throw pError;
+        const pDb = await dbHelper.findPartnerById(partnerId);
         if (pDb) {
           partnerDetails = {
-            name: pDb.name,
-            phone: pDb.phone,
+            name: pDb.name || 'Professional Partner',
+            phone: pDb.phone || 'Hidden',
             rating: pDb.rating || 5.0,
             experience: pDb.experience || 1
           };

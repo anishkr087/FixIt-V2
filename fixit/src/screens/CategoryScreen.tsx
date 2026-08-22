@@ -7,10 +7,10 @@ import { colors } from '../theme/colors';
 import { GlassCard } from '../components/GlassCard';
 
 const MOCK_SERVICES: Record<string, any[]> = {
-  Cleaning: [
-    { id: 'c1', name: 'Deep Home Cleaning', price: 2999 },
-    { id: 'c3', name: 'Bathroom Deep Clean', price: 499 },
-    { id: 'c4', name: 'Kitchen Deep Clean', price: 999 },
+  Welder: [
+    { id: 'w1', name: 'Gate / Grill Repair & Welding', price: 999 },
+    { id: 'w2', name: 'Door Latch / Hinge Repair', price: 349 },
+    { id: 'w3', name: 'New Iron Railing Fabrication', price: 4999 },
   ],
   Electrician: [
     { id: 'e1', name: 'Full Home Wiring & Safety Audit', price: 4999 },
@@ -92,13 +92,16 @@ const ONE_TAP_SERVICES: Record<string, any[]> = {
   Carpenter: [
     { id: 'ot5', name: 'Door Lock Repair', price: 199, icon: 'key-outline', color: '#FBC2EB' },
   ],
-  Cleaning: [
-    { id: 'ot6', name: 'Sofa Cleaning', price: 299, icon: 'sparkles-outline', color: '#FF9A9E' },
+  Welder: [
+    { id: 'ot_w1', name: 'Minor Welding / Spot Welding', price: 199, icon: 'construct-outline', color: '#FECFEF' },
+    { id: 'ot_w2', name: 'Hinge / Latch Welding Repair', price: 249, icon: 'build-outline', color: '#FFF59D' },
+    { id: 'ot_w3', name: 'Metal Chair / Table Repair', price: 299, icon: 'hammer-outline', color: '#E0C3FC' },
+    { id: 'ot_w4', name: 'Iron Gate / Lock Weld Fixing', price: 499, icon: 'key-outline', color: '#A1C4FD' },
   ],
 };
 
 export const CategoryScreen = ({ route, navigation }: any) => {
-  const { categoryName } = route.params || { categoryName: 'Cleaning' };
+  const { categoryName } = route.params || { categoryName: 'Electrician' };
   const [mechanicSubTab, setMechanicSubTab] = useState<'Car' | 'Bike' | 'Auto'>('Car');
   
   const lookupCategory = categoryName === 'Mechanic' ? `Mechanic_${mechanicSubTab}` : categoryName;

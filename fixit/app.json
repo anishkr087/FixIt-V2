@@ -2,7 +2,7 @@
   "expo": {
     "name": "fixit",
     "slug": "fixit",
-    "version": "1.0.0",
+    "version": "1.0.2",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -19,6 +19,7 @@
     },
     "android": {
       "package": "com.kumar.fixit",
+      "versionCode": 2,
       "config": {
         "googleMaps": {
           "apiKey": "AIzaSyDummyKeyForGoogleMapsInitializationToPreventCrash"

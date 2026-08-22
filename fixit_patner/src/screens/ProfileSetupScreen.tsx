@@ -96,7 +96,7 @@ export default function ProfileSetupScreen() {
 
             <Text style={styles.label}>Service Category (Select one or more)</Text>
             <View style={styles.chipContainer}>
-              {['Electrician', 'Plumber', 'Cleaning', 'Pest Control', 'Carpenter', 'Mechanic'].map((cat) => {
+              {['Electrician', 'Plumber', 'Welder', 'Carpenter', 'Mechanic'].map((cat) => {
                 const isSelected = selectedCategories.includes(cat);
                 return (
                   <TouchableOpacity

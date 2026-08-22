@@ -437,7 +437,7 @@ export default function PartnerHomeScreen({ navigation }: any) {
       >
         {UrlTile && (
           <UrlTile
-            urlTemplate="https://a.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png"
+            urlTemplate="https://a.tile.openstreetmap.org/{z}/{x}/{y}.png"
             maximumZ={19}
             tileSize={256}
             flipY={false}
