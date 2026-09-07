@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, ActivityIndicator, Platform } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, ActivityIndicator, Platform, RefreshControl } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
@@ -14,12 +14,14 @@ let MapView: any = null;
 let Marker: any = null;
 let Polyline: any = null;
 let UrlTile: any = null;
+let PROVIDER_GOOGLE: any = null;
 try {
   const Maps = require('react-native-maps');
   MapView = Maps.default;
   Marker = Maps.Marker;
   Polyline = Maps.Polyline;
   UrlTile = Maps.UrlTile;
+  PROVIDER_GOOGLE = Maps.PROVIDER_GOOGLE;
 } catch (e) {
   console.warn('react-native-maps not available:', e);
 }
@@ -54,12 +56,19 @@ export const BookingsScreen = () => {
   const { user } = useAuthStore();
   const [pastBookings, setPastBookings] = useState<any[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const onRefresh = () => {
+    setRefreshing(true);
+    fetchBookingHistory();
+  };
 
   const fetchBookingHistory = async () => {
     if (!user || !user.phone) return;
     try {
       setLoadingHistory(true);
-      const response = await apiClient.get(`/customer/bookings/${user.phone}`);
+      const encodedPhone = encodeURIComponent(user.phone.trim());
+      const response = await apiClient.get(`/customer/bookings/${encodedPhone}`);
       if (response.data && response.data.success && response.data.bookings) {
         const bookings = response.data.bookings;
         setPastBookings(bookings);
@@ -81,6 +90,7 @@ export const BookingsScreen = () => {
       console.error('Error fetching bookings inside BookingsScreen:', err);
     } finally {
       setLoadingHistory(false);
+      setRefreshing(false);
     }
   };
 
@@ -217,7 +227,8 @@ export const BookingsScreen = () => {
           <View style={styles.mapContainer}>
             <MapView
               style={styles.liveMap}
-              mapType="none"
+              provider={PROVIDER_GOOGLE}
+              mapType="standard"
               region={{
                 latitude: activeBooking?.lat || user?.lat || currentLocation?.coords.latitude || pLocation?.lat || 28.6139,
                 longitude: activeBooking?.lng || user?.lng || currentLocation?.coords.longitude || pLocation?.lng || 77.2090,
@@ -227,14 +238,6 @@ export const BookingsScreen = () => {
               scrollEnabled={true}
               zoomEnabled={true}
             >
-              {UrlTile && (
-                <UrlTile
-                  urlTemplate="https://a.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                  maximumZ={19}
-                  tileSize={256}
-                  flipY={false}
-                />
-              )}
               {/* Customer Marker */}
               {(activeBooking?.lat || user?.lat || currentLocation) && (
                 <Marker
@@ -391,7 +394,11 @@ export const BookingsScreen = () => {
 
   return (
     <SafeAreaView style={styles.container}>
-      <ScrollView contentContainerStyle={[styles.scrollContent, { paddingBottom: tabBarHeight + 20 }]} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        contentContainerStyle={[styles.scrollContent, { paddingBottom: tabBarHeight + 20 }]}
+        showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[colors.primary]} />}
+      >
         <Text style={styles.headerTitle}>My Bookings</Text>
 
         {activeBooking && renderLiveStatus()}

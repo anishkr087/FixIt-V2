@@ -1,5 +1,74 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, Dimensions, TouchableOpacity, SafeAreaView, ActivityIndicator, Platform, Alert, Vibration, Linking, Modal, Image } from 'react-native';
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  TouchableOpacity,
+  ActivityIndicator,
+  Platform,
+  Alert,
+  Vibration,
+  Linking,
+  Modal,
+  Image,
+  RefreshControl,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import {
+  Bell,
+  User,
+  Power,
+  IndianRupee,
+  Briefcase,
+  Zap,
+  MapPin,
+  Clock,
+  Navigation,
+  CheckCircle,
+  Truck,
+  PlayCircle,
+  Shield,
+  X,
+  Eye,
+  Radio,
+  FileText,
+  ExternalLink,
+} from 'lucide-react-native';
+import { io, Socket } from 'socket.io-client';
+import * as Location from 'expo-location';
+import axios from 'axios';
+import { colors } from '../theme/colors';
+import { useAuth, API_URL } from '../context/AuthContext';
+
+let TaskManager: any = null;
+try {
+  TaskManager = require('expo-task-manager');
+} catch (e) {
+  console.warn('expo-task-manager unavailable:', e);
+}
+
+const SOCKET_URL = process.env.EXPO_PUBLIC_SOCKET_URL || 'https://fixit-v2.onrender.com';
+const BACKGROUND_LOCATION_TASK = 'BACKGROUND_PARTNER_LOCATION_TASK';
+
+if (TaskManager && TaskManager.defineTask) {
+  try {
+    TaskManager.defineTask(BACKGROUND_LOCATION_TASK, ({ data, error }: any) => {
+      if (error) {
+        console.error('[Background Location] Task error:', error);
+        return;
+      }
+      if (data) {
+        const { locations } = data;
+        if (locations && locations.length > 0) {
+          console.log('[Background Location] Active partner position:', locations[0].coords.latitude, locations[0].coords.longitude);
+        }
+      }
+    });
+  } catch (e) {
+    console.log('[Background Location] Task definition check note:', e);
+  }
+}
 
 const playAlarmSound = () => {
   try {
@@ -28,46 +97,6 @@ const playAlarmSound = () => {
   }
 };
 
-// Lazy-load react-native-maps to prevent crash if native module not ready
-let MapView: any = null, Marker: any = null, Polyline: any = null, Circle: any = null, UrlTile: any = null;
-try { const M = require('react-native-maps'); MapView = M.default; Marker = M.Marker; Polyline = M.Polyline; Circle = M.Circle; UrlTile = M.UrlTile; } catch(e) { console.warn('Maps unavailable', e); }
-import { MapPin, Navigation, CheckCircle, Clock, Truck, PlayCircle, PowerOff, Shield } from 'lucide-react-native';
-import { io, Socket } from 'socket.io-client';
-import * as Location from 'expo-location';
-import axios from 'axios';
-import { colors } from '../theme/colors';
-import { useAuth, API_URL } from '../context/AuthContext';
-
-let TaskManager: any = null;
-try {
-  TaskManager = require('expo-task-manager');
-} catch (e) {
-  console.warn('expo-task-manager unavailable:', e);
-}
-
-const { width, height } = Dimensions.get('window');
-const SOCKET_URL = process.env.EXPO_PUBLIC_SOCKET_URL || 'https://fixit-v2.onrender.com';
-const BACKGROUND_LOCATION_TASK = 'BACKGROUND_PARTNER_LOCATION_TASK';
-
-if (TaskManager && TaskManager.defineTask) {
-  try {
-    TaskManager.defineTask(BACKGROUND_LOCATION_TASK, ({ data, error }: any) => {
-      if (error) {
-        console.error('[Background Location] Task error:', error);
-        return;
-      }
-      if (data) {
-        const { locations } = data;
-        if (locations && locations.length > 0) {
-          console.log('[Background Location] Active partner position:', locations[0].coords.latitude, locations[0].coords.longitude);
-        }
-      }
-    });
-  } catch (e) {
-    console.log('[Background Location] Task definition check note:', e);
-  }
-}
-
 const parseJobDescription = (desc: string) => {
   if (!desc) return { items: 'Job Request', details: '', photos: [] };
   try {
@@ -91,79 +120,23 @@ export default function PartnerHomeScreen({ navigation }: any) {
   const [isOnline, setIsOnline] = useState(false);
   const [incomingJob, setIncomingJob] = useState<any>(null);
   const [acceptedJob, setAcceptedJob] = useState<any>(null);
-  
-  // Job Workflow States: '' -> 'accepted' -> 'on_the_way' -> 'reached' -> 'work_started' -> 'completed'
-  const [jobStatus, setJobStatus] = useState<string>(''); 
-  
-  const [loading, setLoading] = useState(true);
+  const [jobStatus, setJobStatus] = useState<string>(''); // '' -> 'accepted' -> 'on_the_way' -> 'reached' -> 'work_started' -> 'completed'
   const [timeLeft, setTimeLeft] = useState(30);
-  const [currentLocation, setCurrentLocation] = useState<Location.LocationObject | null>({
-    coords: {
-      latitude: partnerInfo?.lat || 25.0113,
-      longitude: partnerInfo?.lng || 84.0200,
-      altitude: null,
-      accuracy: null,
-      altitudeAccuracy: null,
-      heading: null,
-      speed: null,
-    },
-    timestamp: Date.now(),
-  });
-  
+
   const [walletBalance, setWalletBalance] = useState<number>(0);
-  const [fetchingWallet, setFetchingWallet] = useState<boolean>(true);
-  const [showPaymentSelectionModal, setShowPaymentSelectionModal] = useState<boolean>(false);
+  const [todayEarnings, setTodayEarnings] = useState<number>(0);
+  const [todayJobsCount, setTodayJobsCount] = useState<number>(0);
+  const [upcomingJobs, setUpcomingJobs] = useState<any[]>([]);
 
-  const fetchWalletBalance = async () => {
-    try {
-      const response = await axios.get(`${API_URL}/partner/earnings`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      setWalletBalance(response.data.walletBalance);
-      
-      // Force offline if suspended
-      if (response.data.walletBalance <= -500 && isOnlineRef.current) {
-        setIsOnline(false);
-        socketRef.current?.emit('go_offline', { partnerId: partnerInfo?._id });
-      }
-    } catch (e) {
-      console.log('Failed to fetch wallet balance on home screen:', e);
-    } finally {
-      setFetchingWallet(false);
-    }
-  };
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [showPaymentSelectionModal, setShowPaymentSelectionModal] = useState(false);
+  const [showNotificationsModal, setShowNotificationsModal] = useState(false);
 
-  const handlePayDues = async () => {
-    try {
-      setLoading(true);
-      const response = await axios.post(`${API_URL}/partner/clear-dues`, {}, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      Alert.alert('Payment Successful ✅', 'Outstanding dues cleared successfully. Your account is now active.');
-      setWalletBalance(response.data.walletBalance);
-    } catch (e: any) {
-      console.log('Failed to pay dues:', e);
-      Alert.alert('Payment Failed', e.response?.data?.error || 'Payment failed. Please try again.');
-    } finally {
-      setLoading(false);
-    }
-  };
+  const [currentLocation, setCurrentLocation] = useState<Location.LocationObject | null>(null);
 
-  useEffect(() => {
-    fetchWalletBalance();
-    
-    const unsubscribe = navigation.addListener('focus', () => {
-      fetchWalletBalance();
-    });
-    return unsubscribe;
-  }, [navigation]);
-  
-  // Membership settings (Commented out for future update)
   const socketRef = useRef<Socket | null>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
-  const locationSubRef = useRef<Location.LocationSubscription | null>(null);
-  
-  // Ref tracking to bypass React hook closure caching inside setupLocationAndSockets watchPosition callback
   const isOnlineRef = useRef(isOnline);
   const acceptedJobRef = useRef(acceptedJob);
   const jobStatusRef = useRef(jobStatus);
@@ -180,63 +153,33 @@ export default function PartnerHomeScreen({ navigation }: any) {
     jobStatusRef.current = jobStatus;
   }, [jobStatus]);
 
-  const getTierConfig = () => {
-    return {
-      radius: 7500, // Fixed 7.5 km coverage range for all partners
-      strokeColor: 'rgba(37, 99, 235, 0.5)',
-      fillColor: 'rgba(37, 99, 235, 0.12)',
-    };
-  };
-
-  const getMapDeltas = () => {
-    if (!isOnline) return { latitudeDelta: 0.02, longitudeDelta: 0.02 };
-    return { latitudeDelta: 0.16, longitudeDelta: 0.16 };
-  };
-
-  useEffect(() => {
-    setupLocationAndSockets();
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-      if (locationSubRef.current) locationSubRef.current.remove();
-      socketRef.current?.disconnect();
-    };
-  }, []);
-
-  const setupLocationAndSockets = async () => {
-    // 1. Get GPS Permissions
-    let { status } = await Location.requestForegroundPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('Permission Denied', 'Please allow location permission to use the partner app.');
-      setLoading(false);
-      return;
-    }
-
-    // Get initial location once for map display
+  const fetchDashboardData = async () => {
     try {
-      const location = await Location.getCurrentPositionAsync({});
-      setCurrentLocation(location);
-    } catch (e) {
-      console.log('Initial location fetch note:', e);
-    }
-    setLoading(false);
-
-    // 2. Setup Socket
-    socketRef.current = io(SOCKET_URL, {
-      auth: { token }
-    });
-    socketRef.current.on('connect', () => {
-      console.log('Connected to socket server with auth token:', socketRef.current?.id);
-    });
-
-    // 3. Fetch active job if any
-    try {
-      const response = await axios.get(`${API_URL}/partner/jobs`, {
+      // 1. Fetch Earnings & Wallet Balance
+      const earningsRes = await axios.get(`${API_URL}/partner/earnings`, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      if (response.data && response.data.success && response.data.history) {
-        const active = response.data.history.find((j: any) => j.status !== 'completed' && j.status !== 'cancelled');
+      if (earningsRes.data) {
+        setWalletBalance(earningsRes.data.walletBalance ?? 0);
+        setTodayEarnings(earningsRes.data.todayEarnings ?? 0);
+        setTodayJobsCount(earningsRes.data.jobsCompleted ?? 0);
+
+        // Force offline if suspended
+        if (earningsRes.data.walletBalance <= -500 && isOnlineRef.current) {
+          setIsOnline(false);
+          socketRef.current?.emit('go_offline', { partnerId: partnerInfo?._id });
+        }
+      }
+
+      // 2. Fetch Jobs history & active job
+      const jobsRes = await axios.get(`${API_URL}/partner/jobs`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (jobsRes.data?.success && jobsRes.data.history) {
+        const active = jobsRes.data.history.find(
+          (j: any) => j.status !== 'completed' && j.status !== 'cancelled'
+        );
         if (active) {
-          console.log('[Active Job Restore] Found active job:', active);
           setAcceptedJob({
             jobId: active.id,
             customerName: active.customerName,
@@ -248,22 +191,65 @@ export default function PartnerHomeScreen({ navigation }: any) {
           });
           setJobStatus(active.status);
         }
+
+        // Upcoming / recent scheduled jobs
+        const upcoming = jobsRes.data.history.filter(
+          (j: any) => j.status === 'scheduled' || j.status === 'accepted'
+        );
+        setUpcomingJobs(upcoming.length > 0 ? upcoming : jobsRes.data.history.slice(0, 3));
       }
-    } catch (err) {
-      console.log('Error fetching active job on mount:', err);
+    } catch (e) {
+      console.log('Failed to fetch dashboard data:', e);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  useEffect(() => {
+    setupLocationAndSockets();
+    fetchDashboardData();
+
+    const unsubscribe = navigation.addListener('focus', () => {
+      fetchDashboardData();
+    });
+
+    return () => {
+      unsubscribe();
+      if (timerRef.current) clearInterval(timerRef.current);
+      socketRef.current?.disconnect();
+    };
+  }, [navigation]);
+
+  const setupLocationAndSockets = async () => {
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status === 'granted') {
+        const loc = await Location.getCurrentPositionAsync({});
+        setCurrentLocation(loc);
+      }
+    } catch (e) {
+      console.log('Location permission / position note:', e);
     }
 
+    socketRef.current = io(SOCKET_URL, {
+      auth: { token }
+    });
+
+    socketRef.current.on('connect', () => {
+      console.log('[Socket] Connected with auth token:', socketRef.current?.id);
+    });
+
     socketRef.current.on('new_job_broadcast', (jobData: any) => {
-      // Use refs to read current state values — avoids stale closure
-      if (!acceptedJobRef.current && !jobStatusRef.current) { 
+      if (!acceptedJobRef.current && !jobStatusRef.current) {
         setIncomingJob(jobData);
-        playAlarmSound(); // Trigger alarm sound & vibration notification
+        playAlarmSound();
         startTimer();
       }
     });
 
     socketRef.current.on('job_assigned_to_other', () => {
-      handleDeclineJob(); 
+      handleDeclineJob();
     });
 
     socketRef.current.on('error_notification', (msg: string) => {
@@ -274,8 +260,8 @@ export default function PartnerHomeScreen({ navigation }: any) {
   const handleToggleOnline = async () => {
     const newStatus = !isOnline;
     setIsOnline(newStatus);
+
     if (newStatus) {
-      // Fetch current GPS position ONCE when partner clicks Go Online
       let loc = currentLocation;
       try {
         loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
@@ -284,12 +270,10 @@ export default function PartnerHomeScreen({ navigation }: any) {
         console.log('Error getting position for go_online:', err);
       }
 
-      console.log(`[Go Online] Sending location ONCE for partner ${partnerInfo?._id}:`, loc?.coords.latitude, loc?.coords.longitude);
-
-      socketRef.current?.emit('go_online', { 
+      socketRef.current?.emit('go_online', {
         partnerId: partnerInfo?._id,
-        lat: loc?.coords.latitude,
-        lng: loc?.coords.longitude,
+        lat: loc?.coords.latitude || 25.0113,
+        lng: loc?.coords.longitude || 84.0200,
         serviceCategory: partnerInfo?.serviceCategory
       });
     } else {
@@ -301,7 +285,7 @@ export default function PartnerHomeScreen({ navigation }: any) {
     setTimeLeft(30);
     if (timerRef.current) clearInterval(timerRef.current);
     timerRef.current = setInterval(() => {
-      setTimeLeft(prev => {
+      setTimeLeft((prev) => {
         if (prev <= 1) {
           if (timerRef.current) clearInterval(timerRef.current);
           setIncomingJob(null);
@@ -330,10 +314,10 @@ export default function PartnerHomeScreen({ navigation }: any) {
       setShowPaymentSelectionModal(true);
     } else {
       setJobStatus(newStatus);
-      socketRef.current?.emit('update_job_status', { 
-        jobId: acceptedJob.jobId, 
+      socketRef.current?.emit('update_job_status', {
+        jobId: acceptedJob.jobId,
         partnerId: partnerInfo?._id,
-        status: newStatus 
+        status: newStatus
       });
     }
   };
@@ -341,29 +325,35 @@ export default function PartnerHomeScreen({ navigation }: any) {
   const submitJobCompletion = (method: 'UPI' | 'COD') => {
     if (!acceptedJob) return;
     setShowPaymentSelectionModal(false);
-    socketRef.current?.emit('complete_job', { 
-      jobId: acceptedJob.jobId, 
+    socketRef.current?.emit('complete_job', {
+      jobId: acceptedJob.jobId,
       partnerId: partnerInfo?._id,
       paymentMethod: method
     });
-    Alert.alert('Job Completed! ✅', `Job marked as completed. Payment recorded via ${method === 'UPI' ? 'UPI' : 'Cash'}.`);
+    Alert.alert('Job Completed! 🎉', `Job marked as completed. Payment recorded via ${method === 'UPI' ? 'UPI' : 'Cash'}.`);
     setAcceptedJob(null);
     setJobStatus('');
-    fetchWalletBalance();
+    fetchDashboardData();
   };
 
-  const handleOpenGoogleMaps = () => {
-    if (!acceptedJob) return;
-    const lat = acceptedJob.lat;
-    const lng = acceptedJob.lng;
-    const url = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`;
-    
+  // Redirect to Google Maps for turn-by-turn directions using coordinates
+  const handleOpenDirections = (lat?: number, lng?: number) => {
+    const targetLat = lat || incomingJob?.lat || acceptedJob?.lat;
+    const targetLng = lng || incomingJob?.lng || acceptedJob?.lng;
+
+    if (!targetLat || !targetLng) {
+      Alert.alert('Location Coordinates', 'Coordinates are not available for this job.');
+      return;
+    }
+
+    const url = `https://www.google.com/maps/dir/?api=1&destination=${targetLat},${targetLng}`;
+
     Linking.canOpenURL(url)
       .then((supported) => {
         if (supported) {
           Linking.openURL(url);
         } else {
-          Alert.alert('Error', 'Google Maps is not installed or cannot be opened.');
+          Linking.openURL(`https://maps.google.com/?q=${targetLat},${targetLng}`);
         }
       })
       .catch((err) => {
@@ -372,21 +362,24 @@ export default function PartnerHomeScreen({ navigation }: any) {
       });
   };
 
-  if (loading || !currentLocation) {
-    return (
-      <View style={[styles.container, styles.centerElements]}>
-        <ActivityIndicator size="large" color={colors.primary} />
-        <Text style={{ marginTop: 10, color: colors.textSecondary }}>Acquiring high-accuracy GPS...</Text>
-      </View>
-    );
-  }
+  const handlePayDues = async () => {
+    try {
+      setLoading(true);
+      const response = await axios.post(`${API_URL}/partner/clear-dues`, {}, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      Alert.alert('Payment Successful ✅', 'Outstanding dues cleared successfully. Your account is now active.');
+      setWalletBalance(response.data.walletBalance);
+      fetchDashboardData();
+    } catch (e: any) {
+      console.log('Failed to pay dues:', e);
+      Alert.alert('Payment Failed', e.response?.data?.error || 'Payment failed. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
 
-  // Draw simulated route line between partner and customer if job accepted
-  const routeCoordinates = acceptedJob ? [
-    { latitude: currentLocation.coords.latitude, longitude: currentLocation.coords.longitude },
-    { latitude: acceptedJob.lat, longitude: acceptedJob.lng }
-  ] : [];
-
+  // Suspension check
   if (walletBalance <= -500) {
     return (
       <SafeAreaView style={[styles.container, styles.suspendedContainer]}>
@@ -398,7 +391,7 @@ export default function PartnerHomeScreen({ navigation }: any) {
           <Text style={styles.suspendedSubtitle}>
             Your partner profile is suspended because your wallet balance has reached the maximum overdraft limit of -₹500.
           </Text>
-          
+
           <View style={styles.dueCard}>
             <Text style={styles.dueLabel}>Outstanding Balance</Text>
             <Text style={styles.dueValue}>₹{walletBalance}</Text>
@@ -424,580 +417,1143 @@ export default function PartnerHomeScreen({ navigation }: any) {
   const acceptedParsedDesc = acceptedJob ? parseJobDescription(acceptedJob.problemDescription) : null;
 
   return (
-    <View style={styles.container}>
-      <MapView
-        style={styles.map}
-        showsUserLocation={false} 
-        mapType="none"
-        region={{
-          latitude: currentLocation?.coords?.latitude ?? partnerInfo?.lat ?? 25.0113,
-          longitude: currentLocation?.coords?.longitude ?? partnerInfo?.lng ?? 84.0200,
-          ...getMapDeltas()
-        }}
-      >
-        {UrlTile && (
-          <UrlTile
-            urlTemplate="https://a.tile.openstreetmap.org/{z}/{x}/{y}.png"
-            maximumZ={19}
-            tileSize={256}
-            flipY={false}
-          />
-        )}
-        {/* Dynamic Range Circle */}
-        {isOnline && currentLocation?.coords && (
-          <Circle
-            center={{
-              latitude: currentLocation.coords.latitude,
-              longitude: currentLocation.coords.longitude
-            }}
-            radius={getTierConfig().radius}
-            strokeColor={getTierConfig().strokeColor}
-            fillColor={getTierConfig().fillColor}
-            strokeWidth={2}
-          />
-        )}
-
-        {/* Partner GPS Marker */}
-        {currentLocation?.coords && (
-          <Marker coordinate={{ latitude: currentLocation.coords.latitude, longitude: currentLocation.coords.longitude }} title="You">
-            <View style={styles.partnerMarker}>
-              <View style={styles.partnerMarkerInner} />
-            </View>
-          </Marker>
-        )}
-
-        {/* Customer Marker */}
-        {(incomingJob || acceptedJob) && (
-          <Marker
-            coordinate={{ 
-              latitude: incomingJob?.lat || acceptedJob?.lat, 
-              longitude: incomingJob?.lng || acceptedJob?.lng 
-            }}
-          >
-            <View style={styles.requestMarker}>
-              <MapPin size={28} color={colors.card} fill={acceptedJob ? colors.success : colors.warning} />
-            </View>
-          </Marker>
-        )}
-
-        {/* Route Polyline */}
-        {acceptedJob && (
-          <Polyline
-            coordinates={routeCoordinates}
-            strokeColor={colors.primary}
-            strokeWidth={4}
-            lineDashPattern={[10, 5]}
-          />
-        )}
-      </MapView>
-
-      <SafeAreaView style={styles.topBarContainer}>
-        <View style={styles.topBar}>
-          <TouchableOpacity onPress={handleToggleOnline} style={styles.statusBadge} disabled={!!acceptedJob || walletBalance <= -500}>
-            <View style={[styles.statusDot, { backgroundColor: isOnline ? colors.success : colors.textSecondary }]} />
-            <Text style={styles.statusText}>{isOnline ? 'Online' : 'Offline'}</Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* 7.5km Coverage Range Header Notice */}
-        <View style={styles.rangeInfoBanner}>
-          <MapPin size={16} color="#2563EB" style={{ marginRight: 6 }} />
-          <Text style={styles.rangeInfoText}>You can only accept jobs within 7.5km of range 📍</Text>
-        </View>
-
-        {/* Warning Banner for Low Balance (wallet <= -300 and > -500) */}
-        {walletBalance <= -300 && walletBalance > -500 && (
-          <View style={styles.warningBanner}>
-            <Text style={styles.warningBannerText}>
-              ⚠️ Warning: Low wallet balance (₹{walletBalance}). Clear outstanding dues soon to avoid account suspension (threshold: -₹500).
-            </Text>
-          </View>
-        )}
-      </SafeAreaView>
-
-      {/* Incoming Job Popup (30-sec limit) */}
-      {incomingJob && !acceptedJob && (
-        <View style={styles.bottomSheet}>
-          <View style={styles.timerRow}>
-            <Clock size={20} color={colors.error} />
-            <Text style={styles.timerText}>00:{timeLeft < 10 ? `0${timeLeft}` : timeLeft}</Text>
-          </View>
-          <Text style={styles.jobTitle}>{incomingParsedDesc?.items}</Text>
-          {incomingParsedDesc?.details ? (
-            <Text style={[styles.jobUser, { marginTop: -4, marginBottom: 8, fontStyle: 'italic', color: colors.text }]}>
-              Details: "{incomingParsedDesc.details}"
-            </Text>
-          ) : null}
-          {incomingParsedDesc?.photos && incomingParsedDesc.photos.length > 0 ? (
-            <View style={styles.photosRow}>
-              {incomingParsedDesc.photos.map((base64: string, idx: number) => (
-                <Image key={idx} source={{ uri: base64 }} style={styles.partnerPhotoPreview} />
-              ))}
-            </View>
-          ) : null}
-          <Text style={styles.jobUser}>Customer: {incomingJob.customerName}</Text>
-          <Text style={[styles.jobUser, { marginTop: 4, fontStyle: 'normal', color: colors.textSecondary }]}>
-            📍 Door Address: {incomingJob.fullAddress || 'Location specified on map'}
+    <SafeAreaView style={styles.container} edges={['top']}>
+      {/* ── HEADER ── */}
+      <View style={styles.header}>
+        <View>
+          <Text style={styles.brandTitle}>
+            Fixit <Text style={styles.brandSubtitle}>Partner</Text>
           </Text>
-          
-          <View style={styles.jobDetailsRow}>
-            <View style={styles.jobDetailBox}>
-              <Text style={styles.jobDetailLabel}>Distance</Text>
-              <Text style={styles.jobDetailValue}>{incomingJob.distance} km</Text>
-            </View>
-            <View style={styles.jobDetailBox}>
-              <Text style={styles.jobDetailLabel}>Earnings</Text>
-              <Text style={styles.jobDetailValue}>₹{(incomingJob.estimatedPrice * 0.8).toFixed(0)}</Text>
-            </View>
-          </View>
-
-          <View style={styles.actionButtons}>
-            <TouchableOpacity style={[styles.button, styles.declineButton]} onPress={handleDeclineJob}>
-              <Text style={[styles.buttonText, { color: colors.text }]}>Decline</Text>
-            </TouchableOpacity>
-            
-            <TouchableOpacity style={[styles.button, styles.acceptButton]} onPress={handleAcceptJob}>
-              <Text style={styles.buttonText}>Accept Job</Text>
-            </TouchableOpacity>
-          </View>
+          <Text style={styles.welcomeText}>
+            {partnerInfo?.serviceCategory ? `${partnerInfo.serviceCategory} Expert` : 'Service Dashboard'}
+          </Text>
         </View>
-      )}
 
-      {/* Offline Bottom Sheet */}
-      {!isOnline && !acceptedJob && !incomingJob && (
-        <View style={styles.bottomSheet}>
-          <View style={{ alignItems: 'center', marginBottom: 20 }}>
-            <View style={{ width: 64, height: 64, borderRadius: 32, backgroundColor: '#F1F5F9', alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
-              <PowerOff size={32} color={colors.textSecondary} />
-            </View>
-            <Text style={{ fontSize: 24, fontWeight: 'bold', color: colors.text, marginBottom: 8 }}>You're Offline</Text>
-            <Text style={{ fontSize: 16, color: colors.textSecondary, textAlign: 'center', lineHeight: 24 }}>
-              Turn your status online to start receiving job requests and earning money.
-            </Text>
-          </View>
-          <TouchableOpacity style={[styles.button, styles.acceptButton, { height: 56 }]} onPress={handleToggleOnline}>
-            <Text style={[styles.buttonText, { fontSize: 18 }]}>Go Online Now</Text>
+        <View style={styles.headerActions}>
+          <TouchableOpacity
+            style={styles.headerIconBtn}
+            onPress={() => setShowNotificationsModal(true)}
+            activeOpacity={0.7}
+          >
+            <Bell size={22} color={colors.text} />
+            {incomingJob && <View style={styles.headerNotifDot} />}
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.headerIconBtn}
+            onPress={() => navigation.navigate('Profile')}
+            activeOpacity={0.7}
+          >
+            <User size={22} color={colors.text} />
           </TouchableOpacity>
         </View>
-      )}
+      </View>
 
-      {/* Accepted Job UI Workflow */}
-      {acceptedJob && (
-         <View style={styles.bottomSheet}>
-          <View style={styles.workflowHeader}>
-            {jobStatus === 'accepted' && <Navigation size={24} color={colors.primary} />}
-            {jobStatus === 'on_the_way' && <Truck size={24} color={colors.primary} />}
-            {jobStatus === 'reached' && <MapPin size={24} color={colors.warning} />}
-            {jobStatus === 'work_started' && <PlayCircle size={24} color={colors.success} />}
-            
-            <Text style={styles.workflowTitle}>
-              {jobStatus === 'accepted' && 'Job Accepted'}
-              {jobStatus === 'on_the_way' && 'Heading to Customer'}
-              {jobStatus === 'reached' && 'Arrived at Location'}
-              {jobStatus === 'work_started' && 'Work in Progress'}
+      <ScrollView
+        style={styles.scrollArea}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={fetchDashboardData} colors={[colors.primary]} />}
+      >
+        {/* ── ONLINE / OFFLINE HERO CARD ── */}
+        <View style={[styles.statusCard, isOnline ? styles.statusCardOnline : styles.statusCardOffline]}>
+          <View style={styles.statusIndicatorRow}>
+            <View style={[styles.statusDot, { backgroundColor: isOnline ? colors.success : '#94A3B8' }]} />
+            <Text style={[styles.statusStateText, { color: isOnline ? colors.success : colors.textSecondary }]}>
+              {isOnline ? 'ONLINE' : 'OFFLINE'}
             </Text>
           </View>
-          
-          <Text style={styles.jobUser}>Task: {acceptedParsedDesc?.items}</Text>
-          {acceptedParsedDesc?.details ? (
-            <Text style={[styles.jobUser, { marginTop: -8, marginBottom: 8, fontStyle: 'italic', color: colors.text }]}>
-              Details: "{acceptedParsedDesc.details}"
+
+          <Text style={styles.statusDescription}>
+            {isOnline
+              ? "You're available for jobs"
+              : "You're currently offline. Turn on to start receiving jobs"}
+          </Text>
+
+          <TouchableOpacity
+            style={[styles.toggleStatusBtn, isOnline ? styles.goOfflineBtn : styles.goOnlineBtn]}
+            onPress={handleToggleOnline}
+            activeOpacity={0.85}
+            disabled={!!acceptedJob}
+          >
+            <Power size={18} color={isOnline ? colors.error : '#FFFFFF'} style={{ marginRight: 8 }} />
+            <Text style={isOnline ? styles.goOfflineBtnText : styles.goOnlineBtnText}>
+              {isOnline ? 'GO OFFLINE' : 'GO ONLINE'}
             </Text>
-          ) : null}
-          {acceptedParsedDesc?.photos && acceptedParsedDesc.photos.length > 0 ? (
-            <View style={styles.photosRow}>
-              {acceptedParsedDesc.photos.map((base64: string, idx: number) => (
-                <Image key={idx} source={{ uri: base64 }} style={styles.partnerPhotoPreview} />
-              ))}
+          </TouchableOpacity>
+        </View>
+
+        {/* ── TODAY METRICS ── */}
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>TODAY</Text>
+          <TouchableOpacity onPress={() => navigation.navigate('Earnings')}>
+            <Text style={styles.viewMoreLink}>View All →</Text>
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.todayRow}>
+          {/* Earnings Card */}
+          <TouchableOpacity
+            style={styles.metricCard}
+            activeOpacity={0.85}
+            onPress={() => navigation.navigate('Earnings')}
+          >
+            <View style={styles.metricIconWrap}>
+              <IndianRupee size={20} color={colors.primary} />
             </View>
-          ) : null}
-          <View style={styles.divider} />
-          
-          <View style={styles.addressRow}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.addressText}>📍 Door Address: {acceptedJob.fullAddress || acceptedJob.doorAddress || 'Customer Door Location'}</Text>
+            <Text style={styles.metricValue}>₹{todayEarnings.toLocaleString('en-IN')}</Text>
+            <Text style={styles.metricLabel}>Earnings</Text>
+          </TouchableOpacity>
+
+          {/* Jobs Card */}
+          <TouchableOpacity
+            style={styles.metricCard}
+            activeOpacity={0.85}
+            onPress={() => navigation.navigate('History')}
+          >
+            <View style={[styles.metricIconWrap, { backgroundColor: '#ECFDF5' }]}>
+              <Briefcase size={20} color={colors.success} />
             </View>
-            {(jobStatus === 'accepted' || jobStatus === 'on_the_way') && (
-              <TouchableOpacity 
-                style={styles.googleMapsBtn} 
-                onPress={handleOpenGoogleMaps}
+            <Text style={styles.metricValue}>{todayJobsCount}</Text>
+            <Text style={styles.metricLabel}>Jobs</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* ── ACTIVE JOB (When job is in progress) ── */}
+        {acceptedJob && (
+          <View style={styles.sectionBlock}>
+            <View style={styles.sectionHeader}>
+              <Text style={[styles.sectionTitle, { color: colors.primary }]}>ACTIVE JOB</Text>
+              <View style={styles.activeStatusPill}>
+                <Text style={styles.activeStatusPillText}>
+                  {jobStatus === 'accepted' && 'Accepted'}
+                  {jobStatus === 'on_the_way' && 'Heading to Customer'}
+                  {jobStatus === 'reached' && 'Reached Location'}
+                  {jobStatus === 'work_started' && 'Work In Progress'}
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.activeJobCard}>
+              <View style={styles.activeJobHeaderRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.activeJobTitle}>
+                    {acceptedParsedDesc?.items || 'Current Job'}
+                  </Text>
+                  <Text style={styles.activeCustomerName}>
+                    Customer: {acceptedJob.customerName || 'Customer'}
+                  </Text>
+                </View>
+                <Text style={styles.activeJobPrice}>₹{acceptedJob.estimatedPrice}</Text>
+              </View>
+
+              {acceptedParsedDesc?.details ? (
+                <Text style={styles.activeJobNotes} numberOfLines={2}>
+                  "{acceptedParsedDesc.details}"
+                </Text>
+              ) : null}
+
+              {/* Clickable address with coordinates */}
+              <TouchableOpacity
+                style={styles.activeAddressCard}
+                onPress={() => handleOpenDirections(acceptedJob.lat, acceptedJob.lng)}
                 activeOpacity={0.8}
               >
-                <Navigation size={14} color="#FFF" style={{ marginRight: 6 }} />
-                <Text style={styles.googleMapsBtnText}>Navigate</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
+                  <MapPin size={16} color={colors.primary} style={{ marginRight: 6, marginTop: 2 }} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.activeAddressText}>
+                      {acceptedJob.fullAddress || acceptedJob.doorAddress || 'Door address specified on booking'}
+                    </Text>
+                    <Text style={styles.tapToNavigateHint}>
+                      📍 Tap to open turn-by-turn directions in Google Maps ↗
+                    </Text>
+                  </View>
+                </View>
               </TouchableOpacity>
+
+              {/* Workflow advancement button */}
+              {jobStatus === 'accepted' && (
+                <TouchableOpacity
+                  style={styles.workflowActionBtn}
+                  onPress={() => advanceJobStatus('on_the_way')}
+                  activeOpacity={0.85}
+                >
+                  <Truck size={18} color="#FFF" style={{ marginRight: 8 }} />
+                  <Text style={styles.workflowActionBtnText}>Start Journey</Text>
+                </TouchableOpacity>
+              )}
+
+              {jobStatus === 'on_the_way' && (
+                <TouchableOpacity
+                  style={styles.workflowActionBtn}
+                  onPress={() => advanceJobStatus('reached')}
+                  activeOpacity={0.85}
+                >
+                  <MapPin size={18} color="#FFF" style={{ marginRight: 8 }} />
+                  <Text style={styles.workflowActionBtnText}>Reached Customer Location</Text>
+                </TouchableOpacity>
+              )}
+
+              {jobStatus === 'reached' && (
+                <TouchableOpacity
+                  style={[styles.workflowActionBtn, { backgroundColor: colors.warning }]}
+                  onPress={() => advanceJobStatus('work_started')}
+                  activeOpacity={0.85}
+                >
+                  <PlayCircle size={18} color="#FFF" style={{ marginRight: 8 }} />
+                  <Text style={styles.workflowActionBtnText}>Start Work</Text>
+                </TouchableOpacity>
+              )}
+
+              {jobStatus === 'work_started' && (
+                <TouchableOpacity
+                  style={[styles.workflowActionBtn, { backgroundColor: colors.success }]}
+                  onPress={() => setShowPaymentSelectionModal(true)}
+                  activeOpacity={0.85}
+                >
+                  <CheckCircle size={18} color="#FFF" style={{ marginRight: 8 }} />
+                  <Text style={styles.workflowActionBtnText}>Mark as Completed</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          </View>
+        )}
+
+        {/* ── UPCOMING BOOKINGS ── */}
+        {!acceptedJob && (
+          <View style={styles.sectionBlock}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>UPCOMING</Text>
+            </View>
+
+            {upcomingJobs.length > 0 ? (
+              upcomingJobs.map((job: any, index: number) => {
+                const desc = parseJobDescription(job.problemDescription);
+                return (
+                  <View key={job.id || index} style={styles.upcomingCard}>
+                    <View style={styles.upcomingMain}>
+                      <View style={styles.upcomingTimeRow}>
+                        <Clock size={14} color={colors.primary} style={{ marginRight: 5 }} />
+                        <Text style={styles.upcomingTimeText}>
+                          {job.time || 'Scheduled for today'}
+                        </Text>
+                      </View>
+                      <Text style={styles.upcomingServiceTitle} numberOfLines={1}>
+                        {desc.items}
+                      </Text>
+                      <View style={styles.upcomingLocationRow}>
+                        <MapPin size={14} color={colors.textSecondary} style={{ marginRight: 4 }} />
+                        <Text style={styles.upcomingLocationText} numberOfLines={1}>
+                          {job.address || 'Nearby service location'}
+                        </Text>
+                      </View>
+                    </View>
+                    <View style={styles.upcomingPriceCol}>
+                      <Text style={styles.upcomingPrice}>₹{job.amount}</Text>
+                    </View>
+                  </View>
+                );
+              })
+            ) : (
+              <View style={styles.emptyUpcomingBox}>
+                <Clock size={28} color="#94A3B8" style={{ marginBottom: 8 }} />
+                <Text style={styles.emptyUpcomingTitle}>No upcoming bookings</Text>
+                <Text style={styles.emptyUpcomingSubtitle}>
+                  {isOnline ? 'Stay online to receive instant booking alerts.' : 'Turn your status online to receive requests.'}
+                </Text>
+              </View>
             )}
           </View>
-          
-          {/* Workflow Action Button */}
-          {jobStatus === 'accepted' && (
-            <TouchableOpacity style={[styles.button, styles.workflowBtnBase]} onPress={() => advanceJobStatus('on_the_way')}>
-              <Text style={styles.buttonText}>Start Journey</Text>
-            </TouchableOpacity>
-          )}
+        )}
+      </ScrollView>
 
-          {jobStatus === 'on_the_way' && (
-            <TouchableOpacity style={[styles.button, styles.workflowBtnBase]} onPress={() => advanceJobStatus('reached')}>
-              <Text style={styles.buttonText}>Reached Customer Location</Text>
-            </TouchableOpacity>
-          )}
+      {/* ── HIGH PRIORITY MODAL: JOB ALERT POPUP (No Map, Clickable Coordinates) ── */}
+      <Modal
+        visible={!!incomingJob && !acceptedJob}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={handleDeclineJob}
+      >
+        <View style={styles.alertOverlay}>
+          <View style={styles.alertCard}>
+            {/* Header: 🔔 NEW JOB */}
+            <View style={styles.alertHeaderRow}>
+              <View style={styles.alertBellBadge}>
+                <Bell size={22} color="#D97706" />
+              </View>
+              <Text style={styles.alertHeading}>NEW JOB</Text>
+            </View>
 
-          {jobStatus === 'reached' && (
-            <TouchableOpacity style={[styles.button, { backgroundColor: colors.warning }]} onPress={() => advanceJobStatus('work_started')}>
-              <Text style={styles.buttonText}>Start Work</Text>
-            </TouchableOpacity>
-          )}
+            {/* Service Name: e.g. AC Service */}
+            <Text style={styles.alertServiceTitle}>
+              {incomingParsedDesc?.items || partnerInfo?.serviceCategory || 'Service Request'}
+            </Text>
 
-          {jobStatus === 'work_started' && (
-            <TouchableOpacity style={[styles.button, { backgroundColor: colors.success }]} onPress={() => setShowPaymentSelectionModal(true)}>
-              <CheckCircle size={20} color={colors.card} style={{marginRight: 8}} />
-              <Text style={styles.buttonText}>Mark as Completed</Text>
+            {/* Location & Coordinates (Clickable -> Redirects to Google Maps Directions) */}
+            <TouchableOpacity
+              style={styles.alertLocationPill}
+              onPress={() => handleOpenDirections(incomingJob?.lat, incomingJob?.lng)}
+              activeOpacity={0.8}
+            >
+              <View style={styles.alertLocRow}>
+                <MapPin size={20} color={colors.primary} style={{ marginRight: 6 }} />
+                <Text style={styles.alertDistanceText}>
+                  {incomingJob?.distance ? `${incomingJob.distance} km` : '2.4 km'}
+                </Text>
+                <Navigation size={14} color={colors.primary} style={{ marginLeft: 6 }} />
+              </View>
+              <Text style={styles.alertCoordsText}>
+                {incomingJob?.lat && incomingJob?.lng
+                  ? `(${incomingJob.lat.toFixed(4)}, ${incomingJob.lng.toFixed(4)}) • Tap for directions`
+                  : 'Tap to view directions on Google Maps'}
+              </Text>
             </TouchableOpacity>
-          )}
-       </View>
-      )}
 
-      {/* Payment Method Selection Modal */}
+            {/* Price: ₹499 */}
+            <Text style={styles.alertPriceText}>₹{incomingJob?.estimatedPrice}</Text>
+
+            {/* Customer Requested: "AC not cooling" */}
+            <View style={styles.alertCustomerBox}>
+              <Text style={styles.alertCustomerLabel}>Customer requested:</Text>
+              <Text style={styles.alertCustomerQuote}>
+                "{incomingParsedDesc?.details || incomingParsedDesc?.items || 'AC not cooling'}"
+              </Text>
+            </View>
+
+            {/* Customer Photos Preview if any */}
+            {incomingParsedDesc?.photos && incomingParsedDesc.photos.length > 0 ? (
+              <View style={styles.alertPhotosRow}>
+                {incomingParsedDesc.photos.map((base64: string, idx: number) => (
+                  <Image key={idx} source={{ uri: base64 }} style={styles.alertPhotoPreview} />
+                ))}
+              </View>
+            ) : null}
+
+            {/* Action Buttons: [ REJECT ]  [ ACCEPT ] */}
+            <View style={styles.alertButtonsRow}>
+              <TouchableOpacity
+                style={styles.alertRejectBtn}
+                onPress={handleDeclineJob}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.alertRejectBtnText}>REJECT</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.alertAcceptBtn}
+                onPress={handleAcceptJob}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.alertAcceptBtnText}>ACCEPT</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Timer: 00:18 */}
+            <View style={styles.alertTimerWrap}>
+              <Clock size={16} color={colors.textSecondary} style={{ marginRight: 6 }} />
+              <Text style={styles.alertTimerText}>
+                00:{timeLeft < 10 ? `0${timeLeft}` : timeLeft}
+              </Text>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ── MODAL: PAYMENT COMPLETION ── */}
       <Modal
         visible={showPaymentSelectionModal}
         animationType="slide"
         transparent={true}
         onRequestClose={() => setShowPaymentSelectionModal(false)}
       >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalHeaderTitle}>Select Payment Method 💳</Text>
-            <Text style={styles.modalSubTitle}>
-              Confirm how you received the payment from the customer:
+        <View style={styles.alertOverlay}>
+          <View style={styles.paymentModalSheet}>
+            <Text style={styles.paymentModalTitle}>Select Payment Method 💳</Text>
+            <Text style={styles.paymentModalSubtitle}>
+              Confirm how you collected payment from the customer:
             </Text>
 
-            <TouchableOpacity 
-              style={[styles.paymentSelectOption, { borderColor: colors.primary }]}
+            <TouchableOpacity
+              style={[styles.paymentMethodOption, { borderColor: colors.primary }]}
               onPress={() => submitJobCompletion('UPI')}
               activeOpacity={0.8}
             >
               <Navigation size={24} color={colors.primary} />
               <View style={{ flex: 1, marginLeft: 12 }}>
-                <Text style={styles.paymentOptionTitle}>UPI / Online Transfer</Text>
-                <Text style={styles.paymentOptionDesc}>GPay, PhonePe, Paytm, or online link</Text>
+                <Text style={styles.paymentMethodTitle}>UPI / Online Transfer</Text>
+                <Text style={styles.paymentMethodDesc}>GPay, PhonePe, Paytm, or QR code</Text>
               </View>
             </TouchableOpacity>
 
-            <TouchableOpacity 
-              style={[styles.paymentSelectOption, { borderColor: '#16A34A', marginTop: 12 }]}
+            <TouchableOpacity
+              style={[styles.paymentMethodOption, { borderColor: '#16A34A', marginTop: 12 }]}
               onPress={() => submitJobCompletion('COD')}
               activeOpacity={0.8}
             >
               <CheckCircle size={24} color="#16A34A" />
               <View style={{ flex: 1, marginLeft: 12 }}>
-                <Text style={styles.paymentOptionTitle}>Cash Payment</Text>
-                <Text style={styles.paymentOptionDesc}>Paid in cash directly to you</Text>
+                <Text style={styles.paymentMethodTitle}>Cash Payment</Text>
+                <Text style={styles.paymentMethodDesc}>Cash handed directly to you</Text>
               </View>
             </TouchableOpacity>
 
-            <TouchableOpacity 
-              style={styles.cancelModalBtn} 
+            <TouchableOpacity
+              style={styles.modalCancelBtn}
               onPress={() => setShowPaymentSelectionModal(false)}
             >
-              <Text style={styles.cancelModalText}>Cancel</Text>
+              <Text style={styles.modalCancelBtnText}>Cancel</Text>
             </TouchableOpacity>
           </View>
         </View>
       </Modal>
-    </View>
+
+      {/* ── MODAL: NOTIFICATIONS ── */}
+      <Modal
+        visible={showNotificationsModal}
+        animationType="fade"
+        transparent={true}
+        onRequestClose={() => setShowNotificationsModal(false)}
+      >
+        <View style={styles.alertOverlay}>
+          <View style={styles.paymentModalSheet}>
+            <View style={styles.notifHeaderRow}>
+              <Text style={styles.paymentModalTitle}>Notifications</Text>
+              <TouchableOpacity onPress={() => setShowNotificationsModal(false)} style={styles.notifCloseBtn}>
+                <X size={20} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={{ paddingVertical: 16 }}>
+              <View style={styles.notifItem}>
+                <View style={[styles.notifIcon, { backgroundColor: isOnline ? '#ECFDF5' : '#F1F5F9' }]}>
+                  <Radio size={20} color={isOnline ? colors.success : colors.textSecondary} />
+                </View>
+                <View style={{ flex: 1, marginLeft: 12 }}>
+                  <Text style={styles.notifTitle}>
+                    {isOnline ? 'Active on Partner Network' : 'Currently Offline'}
+                  </Text>
+                  <Text style={styles.notifSubtitle}>
+                    {isOnline ? 'You are receiving real-time job broadcasts within 7.5 km.' : 'Turn your status online to start receiving jobs.'}
+                  </Text>
+                </View>
+              </View>
+            </View>
+          </View>
+        </View>
+      </Modal>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.background },
-  centerElements: { justifyContent: 'center', alignItems: 'center' },
-  map: { width: width, height: height },
-  topBarContainer: { position: 'absolute', top: 0, width: '100%' },
-  topBar: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 20, paddingTop: Platform.OS === 'android' ? 44 : 20, marginTop: 12 },
-  statusBadge: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.card, paddingHorizontal: 16, paddingVertical: 10, borderRadius: 20, elevation: 3 },
-  statusDot: { width: 10, height: 10, borderRadius: 5, marginRight: 8 },
-  statusText: { fontWeight: 'bold', color: colors.text },
-  logoutButton: { backgroundColor: colors.card, paddingHorizontal: 16, paddingVertical: 10, borderRadius: 20, elevation: 3, justifyContent: 'center' },
-  logoutText: { fontWeight: 'bold', color: colors.error },
-  offlineBanner: { backgroundColor: colors.card, margin: 20, padding: 16, borderRadius: 16, elevation: 5, alignItems: 'center' },
-  offlineText: { fontSize: 16, fontWeight: 'bold', color: colors.text },
-  offlineSubText: { fontSize: 14, color: colors.textSecondary, marginTop: 4 },
-  bottomSheet: { position: 'absolute', bottom: 24, left: 20, right: 20, backgroundColor: colors.card, borderRadius: 24, padding: 24, elevation: 10 },
-  timerRow: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-end', backgroundColor: '#FEE2E2', paddingHorizontal: 12, paddingVertical: 4, borderRadius: 12, marginBottom: 8 },
-  timerText: { color: colors.error, fontWeight: 'bold', marginLeft: 6 },
-  jobTitle: { fontSize: 22, fontWeight: 'bold', color: colors.text, marginBottom: 4 },
-  jobUser: { fontSize: 16, color: colors.textSecondary, marginBottom: 16 },
-  jobDetailsRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 20 },
-  jobDetailBox: { flex: 1, backgroundColor: '#F1F5F9', padding: 12, borderRadius: 12, marginHorizontal: 4 },
-  jobDetailLabel: { fontSize: 12, color: colors.textSecondary, marginBottom: 4 },
-  jobDetailValue: { fontSize: 18, fontWeight: 'bold', color: colors.text },
-  actionButtons: { flexDirection: 'row', justifyContent: 'space-between' },
-  button: { flex: 1, height: 50, borderRadius: 12, alignItems: 'center', justifyContent: 'center', marginHorizontal: 4, flexDirection: 'row' },
-  declineButton: { backgroundColor: '#F1F5F9' },
-  acceptButton: { backgroundColor: colors.primary },
-  buttonText: { color: colors.card, fontSize: 16, fontWeight: 'bold' },
-  partnerMarker: { width: 30, height: 30, borderRadius: 15, backgroundColor: 'rgba(37, 99, 235, 0.3)', alignItems: 'center', justifyContent: 'center' },
-  partnerMarkerInner: { width: 14, height: 14, borderRadius: 7, backgroundColor: colors.primary, borderWidth: 2, borderColor: '#FFF', shadowColor: '#000', shadowOffset: {width: 0, height: 2}, shadowOpacity: 0.3, shadowRadius: 3 },
-  requestMarker: { alignItems: 'center', justifyContent: 'center' },
-  workflowHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
-  workflowTitle: { fontSize: 20, fontWeight: 'bold', color: colors.text, marginLeft: 8 },
-  divider: { height: 1, backgroundColor: colors.border, marginVertical: 12 },
-  addressText: { fontSize: 14, color: colors.text, marginBottom: 20, fontStyle: 'italic' },
-  workflowBtnBase: { backgroundColor: colors.primary, marginTop: 4 },
-  
-  membershipSelectorBar: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    backgroundColor: 'rgba(255, 255, 255, 0.9)',
-    marginHorizontal: 20,
-    marginTop: 12,
-    borderRadius: 16,
-    padding: 6,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 5,
-    elevation: 2,
-  },
-  tierTab: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
+  container: {
     flex: 1,
-    paddingVertical: 8,
-    borderRadius: 10,
-    marginHorizontal: 2,
-    borderWidth: 1,
-    borderColor: 'transparent',
-  },
-  tierTabText: {
-    fontSize: 10,
-    fontWeight: 'bold',
-    color: colors.textSecondary,
-  },
-  tierTabTextActive: {
-    color: '#FFFFFF',
-  },
-  warningBanner: {
-    backgroundColor: '#FEF3C7',
-    marginHorizontal: 20,
-    marginTop: 10,
-    padding: 12,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#F59E0B',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 5,
-    elevation: 2,
-  },
-  warningBannerText: {
-    color: '#D97706',
-    fontSize: 12,
-    fontWeight: 'bold',
-    textAlign: 'center',
-    lineHeight: 18,
-  },
-  suspendedContainer: {
-    justifyContent: 'center',
-    alignItems: 'center',
     backgroundColor: colors.background,
-    padding: 24,
   },
-  suspendedContent: {
-    width: '100%',
-    backgroundColor: colors.card,
-    borderRadius: 24,
-    padding: 24,
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    elevation: 4,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 10,
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingBottom: 16,
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
   },
-  suspendedIconContainer: {
-    width: 96,
-    height: 96,
-    borderRadius: 48,
-    backgroundColor: '#FEE2E2',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 20,
+  brandTitle: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: colors.primary,
+    letterSpacing: -0.5,
   },
-  suspendedTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: colors.error,
-    marginBottom: 12,
-    textAlign: 'center',
+  brandSubtitle: {
+    color: colors.text,
+    fontWeight: '700',
   },
-  suspendedSubtitle: {
-    fontSize: 15,
+  welcomeText: {
+    fontSize: 13,
     color: colors.textSecondary,
-    textAlign: 'center',
-    lineHeight: 22,
-    marginBottom: 24,
+    marginTop: 2,
+    fontWeight: '500',
   },
-  dueCard: {
-    width: '100%',
-    backgroundColor: '#F8FAFC',
-    borderRadius: 16,
-    padding: 20,
-    alignItems: 'center',
-    marginBottom: 24,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-  },
-  dueLabel: {
-    fontSize: 14,
-    color: colors.textSecondary,
-    marginBottom: 6,
-  },
-  dueValue: {
-    fontSize: 32,
-    fontWeight: 'bold',
-    color: colors.error,
-  },
-  payDuesButton: {
-    width: '100%',
-    height: 56,
-    backgroundColor: colors.primary,
-    borderRadius: 16,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  payDuesButtonText: {
-    color: '#FFF',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  suspendedLogoutBtn: {
-    paddingVertical: 12,
-  },
-  suspendedLogoutBtnText: {
-    color: colors.textSecondary,
-    fontSize: 15,
-    fontWeight: '600',
-  },
-  rangeInfoBanner: {
+  headerActions: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 10,
+  },
+  headerIconBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: colors.background,
+    alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#EFF6FF',
-    marginHorizontal: 20,
-    marginTop: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#93C5FD',
-    elevation: 3,
+    borderColor: colors.border,
+    position: 'relative',
+  },
+  headerNotifDot: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: colors.error,
+  },
+  scrollArea: {
+    flex: 1,
+  },
+  scrollContent: {
+    padding: 20,
+    paddingBottom: 40,
+  },
+
+  /* ── STATUS CARD ── */
+  statusCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    padding: 24,
+    borderWidth: 1.5,
+    alignItems: 'center',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 4,
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 2,
+    marginBottom: 24,
   },
-  rangeInfoText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#1E40AF',
+  statusCardOnline: {
+    borderColor: '#BBF7D0',
+    backgroundColor: '#FAFCFF',
   },
-  addressRow: {
+  statusCardOffline: {
+    borderColor: colors.border,
+    backgroundColor: '#FFFFFF',
+  },
+  statusIndicatorRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: '#F8FAFC',
-    padding: 12,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    marginVertical: 12,
-    gap: 12,
+    marginBottom: 10,
   },
-  googleMapsBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#0F172A',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 12,
+  statusDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    marginRight: 8,
   },
-  googleMapsBtnText: {
-    color: '#FFF',
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'flex-end',
-  },
-  modalContent: {
-    backgroundColor: '#FFF',
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    padding: 24,
-    paddingBottom: Platform.OS === 'ios' ? 40 : 24,
-  },
-  modalHeaderTitle: {
+  statusStateText: {
     fontSize: 20,
-    fontWeight: 'bold',
-    color: colors.text,
-    marginBottom: 8,
+    fontWeight: '800',
+    letterSpacing: 1,
   },
-  modalSubTitle: {
+  statusDescription: {
     fontSize: 14,
     color: colors.textSecondary,
+    textAlign: 'center',
     marginBottom: 20,
     lineHeight: 20,
   },
-  paymentSelectOption: {
+  toggleStatusBtn: {
     flexDirection: 'row',
-    alignItems: 'center',
-    borderWidth: 1.5,
-    borderRadius: 16,
-    padding: 16,
-    backgroundColor: '#F8FAFC',
-  },
-  paymentOptionTitle: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: colors.text,
-  },
-  paymentOptionDesc: {
-    fontSize: 12,
-    color: colors.textSecondary,
-    marginTop: 2,
-  },
-  cancelModalBtn: {
-    marginTop: 16,
-    paddingVertical: 14,
     alignItems: 'center',
     justifyContent: 'center',
+    paddingVertical: 14,
+    paddingHorizontal: 28,
+    borderRadius: 14,
+    width: '100%',
   },
-  cancelModalText: {
+  goOnlineBtn: {
+    backgroundColor: colors.primary,
+    shadowColor: colors.primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  goOnlineBtnText: {
+    color: '#FFFFFF',
     fontSize: 16,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
+  goOfflineBtn: {
+    backgroundColor: '#FEE2E2',
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+  },
+  goOfflineBtnText: {
+    color: colors.error,
+    fontSize: 16,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
+
+  /* ── TODAY METRICS ── */
+  sectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  sectionTitle: {
+    fontSize: 13,
+    fontWeight: '800',
     color: colors.textSecondary,
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+  },
+  viewMoreLink: {
+    fontSize: 13,
+    color: colors.primary,
     fontWeight: '600',
   },
-  photosRow: {
+  todayRow: {
     flexDirection: 'row',
+    gap: 14,
+    marginBottom: 24,
+  },
+  metricCard: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: colors.border,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+    elevation: 1,
+  },
+  metricIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: '#EFF6FF',
     alignItems: 'center',
-    gap: 12,
-    marginTop: 4,
+    justifyContent: 'center',
+    marginBottom: 12,
+  },
+  metricValue: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: colors.text,
+    marginBottom: 4,
+  },
+  metricLabel: {
+    fontSize: 13,
+    color: colors.textSecondary,
+    fontWeight: '500',
+  },
+
+  /* ── SECTION BLOCK ── */
+  sectionBlock: {
+    marginBottom: 24,
+  },
+
+  /* ── ACTIVE JOB CARD ── */
+  activeStatusPill: {
+    backgroundColor: '#EFF6FF',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+  },
+  activeStatusPillText: {
+    color: colors.primary,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  activeJobCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
+    padding: 20,
+    borderWidth: 1.5,
+    borderColor: '#BFDBFE',
+    shadowColor: '#2563EB',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  activeJobHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
     marginBottom: 8,
   },
-  partnerPhotoPreview: {
+  activeJobTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: colors.text,
+  },
+  activeCustomerName: {
+    fontSize: 13,
+    color: colors.textSecondary,
+    marginTop: 2,
+    fontWeight: '500',
+  },
+  activeJobPrice: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: colors.primary,
+  },
+  activeJobNotes: {
+    fontSize: 13,
+    fontStyle: 'italic',
+    color: colors.text,
+    backgroundColor: '#F8FAFC',
+    padding: 10,
+    borderRadius: 8,
+    marginVertical: 8,
+  },
+  activeAddressCard: {
+    backgroundColor: '#F1F5F9',
+    padding: 12,
+    borderRadius: 12,
+    marginVertical: 8,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  activeAddressText: {
+    fontSize: 13,
+    color: colors.text,
+    fontWeight: '600',
+    lineHeight: 18,
+  },
+  tapToNavigateHint: {
+    fontSize: 12,
+    color: colors.primary,
+    fontWeight: '700',
+    marginTop: 4,
+  },
+  workflowActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.primary,
+    paddingVertical: 14,
+    borderRadius: 12,
+    marginTop: 10,
+  },
+  workflowActionBtnText: {
+    color: '#FFF',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+
+  /* ── UPCOMING ── */
+  upcomingCard: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginBottom: 10,
+  },
+  upcomingMain: {
+    flex: 1,
+    marginRight: 12,
+  },
+  upcomingTimeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  upcomingTimeText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.primary,
+  },
+  upcomingServiceTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: colors.text,
+    marginBottom: 4,
+  },
+  upcomingLocationRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  upcomingLocationText: {
+    fontSize: 12,
+    color: colors.textSecondary,
+  },
+  upcomingPriceCol: {
+    alignItems: 'flex-end',
+  },
+  upcomingPrice: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: colors.text,
+  },
+  emptyUpcomingBox: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 24,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderStyle: 'dashed',
+  },
+  emptyUpcomingTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: colors.text,
+    marginBottom: 4,
+  },
+  emptyUpcomingSubtitle: {
+    fontSize: 13,
+    color: colors.textSecondary,
+    textAlign: 'center',
+  },
+
+  /* ── JOB ALERT POPUP (EXACT WIREFRAME MATCH) ── */
+  alertOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.65)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  alertCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
+    padding: 24,
+    width: '100%',
+    maxWidth: 380,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.25,
+    shadowRadius: 16,
+    elevation: 8,
+  },
+  alertHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 14,
+  },
+  alertBellBadge: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: '#FEF3C7',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+  },
+  alertHeading: {
+    fontSize: 20,
+    fontWeight: '900',
+    color: '#D97706',
+    letterSpacing: 1,
+  },
+  alertServiceTitle: {
+    fontSize: 24,
+    fontWeight: '800',
+    color: colors.text,
+    textAlign: 'center',
+    marginBottom: 14,
+  },
+  alertLocationPill: {
+    backgroundColor: '#EFF6FF',
+    borderRadius: 16,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderWidth: 1.5,
+    borderColor: '#BFDBFE',
+    alignItems: 'center',
+    width: '100%',
+    marginBottom: 14,
+  },
+  alertLocRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  alertDistanceText: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: colors.primary,
+  },
+  alertCoordsText: {
+    fontSize: 11,
+    color: colors.textSecondary,
+    marginTop: 2,
+    fontWeight: '500',
+  },
+  alertPriceText: {
+    fontSize: 32,
+    fontWeight: '900',
+    color: colors.primary,
+    marginBottom: 14,
+  },
+  alertCustomerBox: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 14,
+    padding: 14,
+    width: '100%',
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginBottom: 20,
+  },
+  alertCustomerLabel: {
+    fontSize: 12,
+    color: colors.textSecondary,
+    fontWeight: '600',
+    marginBottom: 4,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  alertCustomerQuote: {
+    fontSize: 15,
+    color: colors.text,
+    fontStyle: 'italic',
+    fontWeight: '500',
+    lineHeight: 20,
+  },
+  alertPhotosRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 16,
+  },
+  alertPhotoPreview: {
     width: 60,
     height: 60,
     borderRadius: 8,
+    backgroundColor: colors.border,
+  },
+  alertButtonsRow: {
+    flexDirection: 'row',
+    gap: 12,
+    width: '100%',
+    marginBottom: 14,
+  },
+  alertRejectBtn: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FEE2E2',
+    borderWidth: 1.5,
+    borderColor: '#FCA5A5',
+    paddingVertical: 14,
+    borderRadius: 14,
+  },
+  alertRejectBtnText: {
+    color: colors.error,
+    fontSize: 15,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  alertAcceptBtn: {
+    flex: 1.2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#10B981',
+    paddingVertical: 14,
+    borderRadius: 14,
+    shadowColor: '#10B981',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.3,
+    shadowRadius: 6,
+    elevation: 3,
+  },
+  alertAcceptBtnText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  alertTimerWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  alertTimerText: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: colors.textSecondary,
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+  },
+
+  /* ── PAYMENT & NOTIF MODALS ── */
+  paymentModalSheet: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
+    padding: 24,
+    width: '100%',
+    maxWidth: 380,
+  },
+  paymentModalTitle: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: colors.text,
+    marginBottom: 4,
+  },
+  paymentModalSubtitle: {
+    fontSize: 14,
+    color: colors.textSecondary,
+    marginBottom: 18,
+    lineHeight: 20,
+  },
+  paymentMethodOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 16,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    backgroundColor: '#FFFFFF',
+  },
+  paymentMethodTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: colors.text,
+  },
+  paymentMethodDesc: {
+    fontSize: 13,
+    color: colors.textSecondary,
+    marginTop: 2,
+  },
+  modalCancelBtn: {
+    alignItems: 'center',
+    paddingVertical: 14,
+    marginTop: 14,
+  },
+  modalCancelBtnText: {
+    fontSize: 15,
+    color: colors.textSecondary,
+    fontWeight: '600',
+  },
+  notifHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  notifCloseBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: colors.background,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  notifItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 14,
+    backgroundColor: colors.background,
+    borderRadius: 12,
+  },
+  notifIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  notifTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: colors.text,
+  },
+  notifSubtitle: {
+    fontSize: 12,
+    color: colors.textSecondary,
+    marginTop: 2,
+    lineHeight: 16,
+  },
+
+  /* ── SUSPENDED SCREEN ── */
+  suspendedContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+    backgroundColor: colors.background,
+  },
+  suspendedContent: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
+    padding: 28,
+    alignItems: 'center',
+    width: '100%',
+    maxWidth: 400,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
-    resizeMode: 'cover',
+    borderColor: '#FECACA',
+    shadowColor: '#EF4444',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 12,
+    elevation: 4,
+  },
+  suspendedIconContainer: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: '#FEE2E2',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 20,
+  },
+  suspendedTitle: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: colors.error,
+    marginBottom: 8,
+  },
+  suspendedSubtitle: {
+    fontSize: 14,
+    color: colors.textSecondary,
+    textAlign: 'center',
+    lineHeight: 20,
+    marginBottom: 20,
+  },
+  dueCard: {
+    backgroundColor: colors.background,
+    borderRadius: 14,
+    padding: 16,
+    width: '100%',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  dueLabel: {
+    fontSize: 12,
+    color: colors.textSecondary,
+    textTransform: 'uppercase',
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  dueValue: {
+    fontSize: 28,
+    fontWeight: '900',
+    color: colors.error,
+  },
+  payDuesButton: {
+    backgroundColor: colors.primary,
+    paddingVertical: 14,
+    borderRadius: 12,
+    width: '100%',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  payDuesButtonText: {
+    color: '#FFF',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  suspendedLogoutBtn: {
+    paddingVertical: 10,
+  },
+  suspendedLogoutBtnText: {
+    color: colors.textSecondary,
+    fontSize: 14,
+    fontWeight: '600',
   },
 });

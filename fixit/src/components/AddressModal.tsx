@@ -13,7 +13,7 @@ import {
   Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import MapView, { Marker, UrlTile, PROVIDER_DEFAULT } from 'react-native-maps';
+import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import * as Location from 'expo-location';
 import { colors } from '../theme/colors';
 import { useAuthStore } from '../store/useAuthStore';
@@ -292,17 +292,11 @@ export const AddressModal: React.FC<AddressModalProps> = ({
               <MapView
                 ref={mapRef}
                 style={styles.map}
-                provider={PROVIDER_DEFAULT}
-                mapType="none"
+                provider={PROVIDER_GOOGLE}
+                mapType="standard"
                 initialRegion={region || { latitude: 25.0113, longitude: 84.0200, latitudeDelta: 0.005, longitudeDelta: 0.005 }}
                 onRegionChangeComplete={handleRegionChangeComplete}
               >
-                <UrlTile
-                  urlTemplate="https://a.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                  maximumZ={19}
-                  tileSize={256}
-                  flipY={false}
-                />
                 <Marker coordinate={{ latitude: selectedCoords?.lat ?? 25.0113, longitude: selectedCoords?.lng ?? 84.0200 }} />
               </MapView>
 

@@ -1,11 +1,13 @@
 import React, { useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, KeyboardAvoidingView, Platform, ActivityIndicator, Alert } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAuthStore } from '../store/useAuthStore';
 import { colors } from '../theme/colors';
 import { GlassCard } from '../components/GlassCard';
 
 export const LoginScreen = () => {
+  const insets = useSafeAreaInsets();
   const { login, verifyOtp, user, updateProfile, completeLogin } = useAuthStore();
   const [step, setStep] = useState<'phone' | 'otp' | 'profile'>('phone');
   const [phone, setPhone] = useState('');
@@ -75,7 +77,7 @@ export const LoginScreen = () => {
 
   return (
     <LinearGradient colors={[colors.primary, '#9B72CB', colors.background]} style={styles.container}>
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.inner}>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={[styles.inner, { paddingTop: Math.max(insets.top, 24) }]}>
 
         <View style={styles.header}>
           <Text style={styles.title}>Fixit</Text>

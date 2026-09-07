@@ -1,14 +1,6 @@
-import React, { useState, useEffect } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  SafeAreaView,
-  ScrollView,
-  TouchableOpacity,
-  ActivityIndicator,
-  RefreshControl,
-} from 'react-native';
+﻿import React, { useState, useEffect } from 'react';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { CheckCircle, XCircle, Clock, MapPin, Calendar, IndianRupee, ShieldCheck } from 'lucide-react-native';
 import axios from 'axios';
 import { colors } from '../theme/colors';
@@ -50,12 +42,13 @@ export default function HistoryScreen() {
   const [refreshing, setRefreshing] = useState(false);
 
   const fetchHistory = async () => {
+    if (!token) return;
     try {
       setLoading(true);
       const res = await axios.get(`${API_URL}/partner/jobs`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (res.data?.success && res.data.history) {
+      if (res.data?.success && Array.isArray(res.data.history)) {
         setHistory(res.data.history);
       }
     } catch (e) {
@@ -68,8 +61,10 @@ export default function HistoryScreen() {
   };
 
   useEffect(() => {
-    fetchHistory();
-  }, []);
+    if (token) {
+      fetchHistory();
+    }
+  }, [token]);
 
   const onRefresh = () => {
     setRefreshing(true);
@@ -80,7 +75,7 @@ export default function HistoryScreen() {
     <SafeAreaView style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Job History 📜</Text>
+        <Text style={styles.headerTitle}>Job History</Text>
         <Text style={styles.headerSub}>Track all your past completed service requests</Text>
       </View>
 
@@ -92,6 +87,15 @@ export default function HistoryScreen() {
         {loading && !refreshing ? (
           <View style={styles.loaderContainer}>
             <ActivityIndicator size="large" color={colors.primary} />
+          </View>
+        ) : history.length === 0 ? (
+          <View style={styles.emptyContainer}>
+            <Clock size={48} color={colors.textSecondary} style={{ marginBottom: 12 }} />
+            <Text style={styles.emptyTitle}>No Job History Yet</Text>
+            <Text style={styles.emptySubtitle}>Completed and fulfilled service orders will appear here.</Text>
+            <TouchableOpacity style={styles.refreshBtn} onPress={onRefresh}>
+              <Text style={styles.refreshBtnText}>Refresh</Text>
+            </TouchableOpacity>
           </View>
         ) : (
           history.map((job) => {
@@ -181,10 +185,40 @@ const styles = StyleSheet.create({
   content: {
     padding: 20,
     paddingBottom: 40,
+    flexGrow: 1,
   },
   loaderContainer: {
     paddingVertical: 40,
     alignItems: 'center',
+  },
+  emptyContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 60,
+    paddingHorizontal: 20,
+  },
+  emptyTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: colors.text,
+    marginBottom: 6,
+  },
+  emptySubtitle: {
+    fontSize: 14,
+    color: colors.textSecondary,
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  refreshBtn: {
+    paddingVertical: 10,
+    paddingHorizontal: 24,
+    backgroundColor: colors.primary,
+    borderRadius: 12,
+  },
+  refreshBtnText: {
+    color: '#FFF',
+    fontWeight: 'bold',
+    fontSize: 14,
   },
   jobCard: {
     backgroundColor: colors.card,

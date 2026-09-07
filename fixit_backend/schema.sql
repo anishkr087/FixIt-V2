@@ -1,7 +1,14 @@
--- Supabase Database Schema DDL for FixIt
+﻿-- Combined Supabase Database Schema DDL for FixIt
 
--- 1. Customers Table
-CREATE TABLE IF NOT EXISTS customers (
+-- 1. Drop existing tables in order of constraint dependency
+DROP TABLE IF EXISTS transactions CASCADE;
+DROP TABLE IF EXISTS job_requests CASCADE;
+DROP TABLE IF EXISTS online_partners CASCADE;
+DROP TABLE IF EXISTS partners CASCADE;
+DROP TABLE IF EXISTS customers CASCADE;
+
+-- 2. Create Customers Table with all address columns
+CREATE TABLE customers (
   phone VARCHAR PRIMARY KEY,
   name VARCHAR,
   email VARCHAR,
@@ -17,8 +24,8 @@ CREATE TABLE IF NOT EXISTS customers (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 2. Partners Table
-CREATE TABLE IF NOT EXISTS partners (
+-- 3. Create Partners Table with phone as primary key
+CREATE TABLE partners (
   phone VARCHAR PRIMARY KEY,
   name VARCHAR,
   profile_photo VARCHAR,
@@ -40,8 +47,11 @@ CREATE TABLE IF NOT EXISTS partners (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 2.1 Online Partners Table for Real-Time 7.5km Broadcast
-CREATE TABLE IF NOT EXISTS online_partners (
+-- Create index for geolocation searches
+CREATE INDEX IF NOT EXISTS idx_partners_online_category ON partners (is_online, service_category);
+
+-- 4. Create Online Partners Table referencing partners(phone)
+CREATE TABLE online_partners (
   partner_id VARCHAR PRIMARY KEY REFERENCES partners(phone) ON DELETE CASCADE,
   service_category VARCHAR NOT NULL,
   location_lat NUMERIC NOT NULL DEFAULT 0,
@@ -49,10 +59,8 @@ CREATE TABLE IF NOT EXISTS online_partners (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_online_partners_category ON online_partners (service_category);
-
--- 3. Job Requests Table
-CREATE TABLE IF NOT EXISTS job_requests (
+-- 5. Create Job Requests Table with all address columns and references
+CREATE TABLE job_requests (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   customer_id VARCHAR NOT NULL REFERENCES customers(phone) ON DELETE CASCADE,
   problem_description TEXT NOT NULL,
@@ -72,8 +80,8 @@ CREATE TABLE IF NOT EXISTS job_requests (
   completed_at TIMESTAMPTZ
 );
 
--- 4. Transactions Table
-CREATE TABLE IF NOT EXISTS transactions (
+-- 6. Create Transactions Table referencing partners(phone) and job_requests(id)
+CREATE TABLE transactions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   partner_id VARCHAR NOT NULL REFERENCES partners(phone) ON DELETE CASCADE,
   job_id UUID REFERENCES job_requests(id) ON DELETE SET NULL,
@@ -83,7 +91,14 @@ CREATE TABLE IF NOT EXISTS transactions (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 5. RPC Geospatial Function for Matchmaking
+-- 7. Disable Row Level Security (RLS) on all tables for backend access
+ALTER TABLE customers DISABLE ROW LEVEL SECURITY;
+ALTER TABLE partners DISABLE ROW LEVEL SECURITY;
+ALTER TABLE online_partners DISABLE ROW LEVEL SECURITY;
+ALTER TABLE job_requests DISABLE ROW LEVEL SECURITY;
+ALTER TABLE transactions DISABLE ROW LEVEL SECURITY;
+
+-- 8. Drop old function and Re-create RPC function
 DROP FUNCTION IF EXISTS find_nearest_online_partners(numeric,numeric,character varying,numeric);
 
 CREATE OR REPLACE FUNCTION find_nearest_online_partners(
@@ -93,7 +108,7 @@ CREATE OR REPLACE FUNCTION find_nearest_online_partners(
   p_max_distance_meters NUMERIC
 )
 RETURNS TABLE (
-  id VARCHAR, -- returns partner phone as id for backward compatibility
+  id VARCHAR, -- returns partner phone as id for backend compatibility
   phone VARCHAR,
   name VARCHAR,
   profile_photo VARCHAR,

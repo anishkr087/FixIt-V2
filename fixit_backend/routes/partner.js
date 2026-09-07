@@ -1,7 +1,8 @@
-const express = require('express');
+﻿const express = require('express');
 const jwt = require('jsonwebtoken');
 const dbHelper = require('../db_helper');
 const supabase = require('../src/config/supabase');
+const jobStore = require('../src/jobStore');
 
 const router = express.Router();
 
@@ -190,35 +191,84 @@ router.post('/clear-dues', authMiddleware, async (req, res) => {
   }
 });
 
-// Get partner job history from DB
+// Get partner job history from DB with memory fallback
 router.get('/jobs', authMiddleware, async (req, res) => {
   try {
-    const { data: jobs, error } = await supabase
-      .from('job_requests')
-      .select('*, customers(name)')
-      .eq('assigned_partner', req.partnerId)
-      .order('created_at', { ascending: false });
+    const partnerId = req.partnerId;
+    const partnerVariants = jobStore.normalizePhoneVariants(partnerId);
+    let supabaseJobs = [];
 
-    if (error) throw error;
+    try {
+      let { data: jobs, error } = await supabase
+        .from('job_requests')
+        .select('*, customer:customers!customer_id(name)')
+        .in('assigned_partner', partnerVariants)
+        .order('created_at', { ascending: false });
 
-    const formattedJobs = (jobs || []).map(j => ({
-      id: j.id,
-      customerName: j.customers?.name || 'Valued Customer',
-      problemDescription: j.problem_description,
-      amount: j.estimated_price,
-      date: new Date(j.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }),
-      time: new Date(j.created_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }),
-      address: j.full_address || `${j.house_no}, ${j.street_address}`,
-      paymentMethod: j.payment_method,
-      status: j.status,
-      lat: j.customer_location_lat,
-      lng: j.customer_location_lng
-    }));
+      if (error) {
+        console.warn('[PartnerJobs] Relational embedding note:', error.message, '- falling back to plain select...');
+        const res2 = await supabase
+          .from('job_requests')
+          .select('*')
+          .in('assigned_partner', partnerVariants)
+          .order('created_at', { ascending: false });
+        jobs = res2.data;
+      }
 
-    res.json({ success: true, history: formattedJobs });
+      if (jobs && jobs.length > 0) {
+        supabaseJobs = jobs.map(j => {
+          const cust = j.customer || j.customers;
+          return {
+            id: j.id,
+            _id: j.id,
+            customerName: cust?.name || 'Valued Customer',
+            problemDescription: j.problem_description,
+            amount: Number(j.estimated_price || 0),
+            date: new Date(j.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }),
+            time: new Date(j.created_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }),
+            address: j.full_address || (j.house_no ? `${j.house_no}, ${j.street_address}` : 'Customer Location'),
+            paymentMethod: j.payment_method || 'COD',
+            status: j.status,
+            lat: Number(j.customer_location_lat || 0),
+            lng: Number(j.customer_location_lng || 0),
+            createdAt: j.created_at
+          };
+        });
+      }
+    } catch (dbErr) {
+      console.warn('[PartnerJobs] Supabase query note (using memory fallback):', dbErr.message || dbErr);
+    }
+
+    // Merge with in-memory partner jobs
+    const memoryJobs = jobStore.getPartnerMemoryJobs(partnerId);
+    const seenIds = new Set();
+    const merged = [];
+
+    // Prioritize memory jobs (active / latest)
+    for (const j of memoryJobs) {
+      const jId = j.id || j._id;
+      if (jId && !seenIds.has(jId)) {
+        seenIds.add(jId);
+        merged.push(j);
+      }
+    }
+
+    // Append Supabase historical records
+    for (const j of supabaseJobs) {
+      const jId = j.id || j._id;
+      if (jId && !seenIds.has(jId)) {
+        seenIds.add(jId);
+        merged.push(j);
+      }
+    }
+
+    // Sort newest first
+    merged.sort((a, b) => new Date(b.createdAt || b.date).getTime() - new Date(a.createdAt || a.date).getTime());
+
+    res.json({ success: true, history: merged });
   } catch (err) {
     console.error('Failed to get partner jobs:', err);
-    res.status(500).json({ error: 'Failed to fetch job history' });
+    res.json({ success: true, history: [] }); // Safe fallback, never break with 500
   }
 });
 

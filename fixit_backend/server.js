@@ -5,6 +5,7 @@ const cors = require('cors');
 const jwt = require('jsonwebtoken');
 const dbHelper = require('./db_helper');
 const supabase = require('./src/config/supabase');
+const jobStore = require('./src/jobStore');
 require('dotenv').config();
 
 const app = express();
@@ -70,10 +71,8 @@ app.get('/api/db-status', async (req, res) => {
 });
 
 // Registry of active online partners
-const activePartners = {};
-// Registry of active jobs & socket mappings for customers
-const activeJobs = {};
-const customerSockets = {};
+// Registry of active online partners, active jobs, and customer sockets from jobStore
+const { activePartners, activeJobs, customerSockets } = jobStore;
 
 // Haversine formula to compute distance in km between two coordinates
 function getDistanceKm(lat1, lon1, lat2, lon2) {
@@ -640,7 +639,7 @@ io.on('connection', (socket) => {
 
       // Clean up in-memory job if cancelled
       if (status === 'cancelled') {
-        delete activeJobs[jobId];
+        jobStore.completeJob(jobId, { status: 'cancelled' });
       }
     }
   });
@@ -746,7 +745,7 @@ io.on('connection', (socket) => {
         });
       }
 
-      delete activeJobs[jobId];
+      jobStore.completeJob(jobId, { status: 'completed', paymentMethod: selectedPaymentMethod, completedAt: new Date().toISOString() });
     }
   });
 
