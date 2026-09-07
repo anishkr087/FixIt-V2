@@ -177,8 +177,12 @@ export default function PartnerHomeScreen({ navigation }: any) {
       });
       if (jobsRes.data?.success && jobsRes.data.history) {
         const active = jobsRes.data.history.find(
-          (j: any) => j.status !== 'completed' && j.status !== 'cancelled'
+          (j: any) => ['accepted', 'on_the_way', 'reached', 'work_started'].includes(j.status)
         );
+        if (!active) {
+          setAcceptedJob(null);
+          setJobStatus('');
+        }
         if (active) {
           setAcceptedJob({
             jobId: active.id,
@@ -207,11 +211,15 @@ export default function PartnerHomeScreen({ navigation }: any) {
   };
 
   useEffect(() => {
-    setupLocationAndSockets();
-    fetchDashboardData();
+    if (token) {
+      setupLocationAndSockets();
+      fetchDashboardData();
+    }
 
     const unsubscribe = navigation.addListener('focus', () => {
-      fetchDashboardData();
+      if (token) {
+        fetchDashboardData();
+      }
     });
 
     return () => {
@@ -219,7 +227,7 @@ export default function PartnerHomeScreen({ navigation }: any) {
       if (timerRef.current) clearInterval(timerRef.current);
       socketRef.current?.disconnect();
     };
-  }, [navigation]);
+  }, [token, navigation]);
 
   const setupLocationAndSockets = async () => {
     try {
@@ -238,13 +246,26 @@ export default function PartnerHomeScreen({ navigation }: any) {
 
     socketRef.current.on('connect', () => {
       console.log('[Socket] Connected with auth token:', socketRef.current?.id);
+      if (isOnlineRef.current) {
+        const pId = partnerInfo?._id || partnerInfo?.phone || partnerInfo?.id;
+        socketRef.current?.emit('go_online', {
+          partnerId: pId,
+          lat: currentLocation?.coords.latitude || 25.0113,
+          lng: currentLocation?.coords.longitude || 84.0200,
+          serviceCategory: partnerInfo?.serviceCategory
+        });
+      }
     });
 
     socketRef.current.on('new_job_broadcast', (jobData: any) => {
-      if (!acceptedJobRef.current && !jobStatusRef.current) {
+      console.log('[Partner] Incoming new_job_broadcast:', jobData);
+      const isBusy = acceptedJobRef.current && ['accepted', 'on_the_way', 'reached', 'work_started'].includes(jobStatusRef.current);
+      if (!isBusy) {
         setIncomingJob(jobData);
         playAlarmSound();
         startTimer();
+      } else {
+        console.log('[Partner] Ignored broadcast because partner is busy with active job');
       }
     });
 
@@ -271,13 +292,13 @@ export default function PartnerHomeScreen({ navigation }: any) {
       }
 
       socketRef.current?.emit('go_online', {
-        partnerId: partnerInfo?._id,
+        partnerId: partnerInfo?._id || partnerInfo?.phone || partnerInfo?.id,
         lat: loc?.coords.latitude || 25.0113,
         lng: loc?.coords.longitude || 84.0200,
         serviceCategory: partnerInfo?.serviceCategory
       });
     } else {
-      socketRef.current?.emit('go_offline', { partnerId: partnerInfo?._id });
+      socketRef.current?.emit('go_offline', { partnerId: partnerInfo?._id || partnerInfo?.phone || partnerInfo?.id });
     }
   };
 

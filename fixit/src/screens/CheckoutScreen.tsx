@@ -268,7 +268,7 @@ export const CheckoutScreen = ({ navigation }: any) => {
       lng: currentLng
     });
 
-    socket?.emit('request_job', {
+    const requestPayload = {
       customerId: user.phone,
       customerName: user.name || 'Valued Customer',
       problemDescription: problemDescriptionPayload,
@@ -283,10 +283,21 @@ export const CheckoutScreen = ({ navigation }: any) => {
       landmark: currentLandmark.trim(),
       altPhone: user.altPhone || '',
       addressType: user.addressType || 'Home'
-    });
+    };
+
+    const activeSocket = socket || useSocketStore.getState().socket;
+    if (activeSocket && activeSocket.connected) {
+      activeSocket.emit('request_job', requestPayload);
+    } else {
+      connect();
+      setTimeout(() => {
+        const retrySock = useSocketStore.getState().socket;
+        retrySock?.emit('request_job', requestPayload);
+      }, 500);
+    }
 
     Alert.alert(
-      'Request Placed! 🛠️',
+      'Request Placed! 🎉',
       'Finding the nearest service professional. Track updates in your Bookings tab.',
       [{ text: 'Track Booking', onPress: () => { clearCart(); navigation.navigate('MainTabs', { screen: 'Bookings' }); } }]
     );

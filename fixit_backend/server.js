@@ -119,11 +119,12 @@ io.on('connection', (socket) => {
   console.log(`A user connected securely: ${socket.id} (user: ${socket.userId})`);
 
   socket.on('go_online', async (data) => {
-    const { partnerId, lat, lng, membershipTier = 'basic', serviceCategory } = data;
+    const partnerId = socket.userId || data?.partnerId;
+    const { lat, lng, membershipTier = 'basic', serviceCategory } = data || {};
     
-    // Authorization Check: Socket owner must match action target
-    if (socket.userType !== 'partner' || socket.userId !== partnerId) {
-      console.error(`[Security Violation] Socket ${socket.id} attempted 'go_online' for partnerId ${partnerId} but is authenticated as user ${socket.userId} (${socket.userType}).`);
+    // Authorization Check: Socket owner must be partner
+    if (socket.userType !== 'partner') {
+      console.error(`[Security Violation] Socket ${socket.id} attempted 'go_online' but is authenticated as user ${socket.userId} (${socket.userType}).`);
       return;
     }
 
@@ -181,11 +182,11 @@ io.on('connection', (socket) => {
   });
 
   socket.on('go_offline', async (data) => {
-    const { partnerId } = data;
+    const partnerId = socket.userId || data?.partnerId;
     
     // Authorization Check
-    if (socket.userType !== 'partner' || socket.userId !== partnerId) {
-      console.error(`[Security Violation] Socket ${socket.id} attempted 'go_offline' for partnerId ${partnerId} but is authenticated as ${socket.userId}.`);
+    if (socket.userType !== 'partner') {
+      console.error(`[Security Violation] Socket ${socket.id} attempted 'go_offline' but is authenticated as ${socket.userId}.`);
       return;
     }
 
@@ -210,8 +211,8 @@ io.on('connection', (socket) => {
 
   // Client requests a service professional
   socket.on('request_job', async (data) => {
+    const customerId = socket.userId || data?.customerId;
     const { 
-      customerId, 
       customerName, 
       problemDescription, 
       category, 
@@ -227,9 +228,9 @@ io.on('connection', (socket) => {
       addressType
     } = data;
     
-    // Authorization Check
-    if (socket.userType !== 'customer' || socket.userId !== customerId) {
-      console.error(`[Security Violation] Socket ${socket.id} attempted 'request_job' for customerId ${customerId} but is authenticated as ${socket.userId}.`);
+    // Authorization Check: Socket owner must be customer
+    if (socket.userType !== 'customer') {
+      console.error(`[Security Violation] Socket ${socket.id} attempted 'request_job' but is authenticated as ${socket.userId} (${socket.userType}).`);
       return;
     }
 
@@ -350,12 +351,26 @@ io.on('connection', (socket) => {
 
     const activeJobId = newJob.jobId;
 
-    // Multi-Partner Broadcast Algorithm: Broadcast to ALL active online partners within 7.5km
+    // Multi-Partner Broadcast Algorithm: Broadcast to ALL active online partners
     let matchedPartners = [];
 
     try {
-      console.log(`[Multi-Broadcast] Looking for ALL online partners for category '${category}' at lat: ${lat}, lng: ${lng} within 7.5km...`);
-      
+      console.log(`[Multi-Broadcast] Looking for online partners for category '${category}' at lat: ${lat}, lng: ${lng}...`);
+
+      const cleanPhone10 = (p) => (p ? p.toString().replace(/[^0-9]/g, '').slice(-10) : '');
+
+      // Helper function to find active partner socket by normalizing phone
+      const findActiveSock = (pId) => {
+        if (!pId) return null;
+        const clean = cleanPhone10(pId);
+        for (const actId in activePartners) {
+          if (cleanPhone10(actId) === clean) {
+            return { partnerId: actId, ...activePartners[actId] };
+          }
+        }
+        return null;
+      };
+
       // 1. Fetch online partners from DB table 'online_partners'
       let dbOnlineList = [];
       try {
@@ -369,23 +384,11 @@ io.on('connection', (socket) => {
         console.warn('online_partners query note:', err.message || err);
       }
 
-      // Fallback: If DB table empty, query active RPC partners
-      if (dbOnlineList.length === 0) {
-        const rpcPartners = await dbHelper.findNearestOnlinePartners(lat, lng, category, 7500);
-        if (rpcPartners && rpcPartners.length > 0) {
-          dbOnlineList = rpcPartners.map(p => ({
-            partner_id: p._id.toString(),
-            service_category: p.service_category || category,
-            location_lat: p.location?.coordinates[1] || lat,
-            location_lng: p.location?.coordinates[0] || lng
-          }));
-        }
-      }
-
-      // Also merge active connected partners in memory
+      // Also merge active connected partners in memory into dbOnlineList
       Object.keys(activePartners).forEach(pId => {
         const memPartner = activePartners[pId];
-        if (!dbOnlineList.some(p => p.partner_id === pId)) {
+        const cleanMem = cleanPhone10(pId);
+        if (!dbOnlineList.some(p => cleanPhone10(p.partner_id) === cleanMem)) {
           dbOnlineList.push({
             partner_id: pId,
             service_category: memPartner.serviceCategory || category,
@@ -403,13 +406,15 @@ io.on('connection', (socket) => {
 
         const categoryMatch = !category || !p.service_category ||
           p.service_category.toLowerCase().includes(category.toLowerCase()) ||
-          category.toLowerCase().includes(p.service_category.toLowerCase());
+          category.toLowerCase().includes(p.service_category.toLowerCase()) ||
+          p.service_category.toLowerCase() === 'all' ||
+          category.toLowerCase() === 'all';
 
         if (distKm <= 7.5 && categoryMatch) {
-          const sock = activePartners[p.partner_id];
-          if (sock && sock.socketId) {
+          const sock = findActiveSock(p.partner_id);
+          if (sock && sock.socketId && !matchedPartners.some(m => m.partnerId === sock.partnerId)) {
             matchedPartners.push({
-              partnerId: p.partner_id,
+              partnerId: sock.partnerId,
               socketId: sock.socketId,
               distance: distKm
             });
@@ -417,7 +422,30 @@ io.on('connection', (socket) => {
         }
       });
 
-      console.log(`[Multi-Broadcast] Found ${matchedPartners.length} active online partner(s) within 7.5km range.`);
+      // 3. Resilient Fallback: If 0 partners found within 7.5km, notify any active connected partner!
+      // This ensures that during testing, across demo devices, or if GPS is offset, the online partner still gets notified!
+      if (matchedPartners.length === 0) {
+        console.log(`[Multi-Broadcast] No partner within 7.5km. Checking all active connected partners (${Object.keys(activePartners).length} online)...`);
+        for (const actId in activePartners) {
+          const actPartner = activePartners[actId];
+          const distKm = getDistanceKm(lat, lng, actPartner.lat, actPartner.lng);
+          const categoryMatch = !category || !actPartner.serviceCategory ||
+            actPartner.serviceCategory.toLowerCase().includes(category.toLowerCase()) ||
+            category.toLowerCase().includes(actPartner.serviceCategory.toLowerCase()) ||
+            actPartner.serviceCategory.toLowerCase() === 'all' ||
+            category.toLowerCase() === 'all';
+
+          if (categoryMatch && actPartner.socketId && !matchedPartners.some(m => m.partnerId === actId)) {
+            matchedPartners.push({
+              partnerId: actId,
+              socketId: actPartner.socketId,
+              distance: isFinite(distKm) ? distKm : 2.4
+            });
+          }
+        }
+      }
+
+      console.log(`[Multi-Broadcast] Found ${matchedPartners.length} active online partner(s) to notify.`);
     } catch (err) {
       console.error('Geo broadcast matching error:', err);
     }
@@ -459,11 +487,12 @@ io.on('connection', (socket) => {
   });
 
   socket.on('accept_job', async (data) => {
-    const { jobId, partnerId } = data;
+    const { jobId } = data;
+    const partnerId = socket.userId || data?.partnerId;
     
     // Authorization Check
-    if (socket.userType !== 'partner' || socket.userId !== partnerId) {
-      console.error(`[Security Violation] Socket ${socket.id} attempted 'accept_job' for partnerId ${partnerId} but is authenticated as ${socket.userId}.`);
+    if (socket.userType !== 'partner') {
+      console.error(`[Security Violation] Socket ${socket.id} attempted 'accept_job' but is authenticated as ${socket.userId} (${socket.userType}).`);
       return;
     }
 
@@ -645,11 +674,12 @@ io.on('connection', (socket) => {
   });
 
   socket.on('complete_job', async (data) => {
-    const { jobId, partnerId } = data;
+    const { jobId } = data;
+    const partnerId = socket.userId || data?.partnerId;
     
     // Authorization Check
-    if (socket.userType !== 'partner' || socket.userId !== partnerId) {
-      console.error(`[Security Violation] Socket ${socket.id} attempted 'complete_job' for partnerId ${partnerId} but is authenticated as ${socket.userId}.`);
+    if (socket.userType !== 'partner') {
+      console.error(`[Security Violation] Socket ${socket.id} attempted 'complete_job' but is authenticated as ${socket.userId} (${socket.userType}).`);
       return;
     }
 
